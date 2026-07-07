@@ -1,0 +1,23 @@
+# Binary
+isola
+dist/
+
+# State (runtime)
+.isola/
+
+# Local config (user projects have their own)
+.isola.toml
+
+# Planning docs
+plan/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

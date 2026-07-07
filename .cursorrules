@@ -1,0 +1,91 @@
+# Isola Auto-Execution Rules
+
+This project uses **isola** for multi-branch development. When working on this project, automatically manage services.
+
+## Auto-Start on Session Begin
+
+**When starting work on this project, AUTOMATICALLY run:**
+
+```bash
+# 1. Start services for current branch
+isola up
+
+# 2. Enable subdomain routing
+isola proxy start
+
+# 3. Open in browser
+isola open
+```
+
+Then inform the user what's running and the access URLs.
+
+## Auto-Start on Branch Switch
+
+**When user switches branches or mentions a feature branch, AUTOMATICALLY:**
+
+```bash
+# Create worktree if needed
+isola add <branch> 2>/dev/null || true
+
+# Start services
+isola up
+
+# Open browser
+isola open
+```
+
+## Auto-Comparison Mode
+
+**When user wants to compare branches, AUTOMATICALLY:**
+
+```bash
+isola up --all
+isola proxy start
+```
+
+Then report:
+- main: http://main.localhost:3000
+- feature: http://feature-x.localhost:3000
+
+---
+
+## Reference
+
+### Commands
+| Command | Action |
+|---------|--------|
+| `isola up` | Start current branch services |
+| `isola up --all` | Start all branches |
+| `isola down` | Stop current |
+| `isola proxy start` | Enable subdomain routing |
+| `isola open` | Open browser |
+| `isola dash` | Interactive dashboard |
+| `isola ls` | List status |
+
+### URLs
+- Format: `http://<branch-slug>.localhost:<proxy-port>`
+- Example: `http://feature-auth.localhost:3000`
+
+### Environment Variables (available in services)
+- `PORT` - Assigned port
+- `ISOLA_BRANCH` - Branch name
+- `ISOLA_BRANCH_SLUG` - URL-safe branch
+- `ISOLA_{SERVICE}_PORT` - Other service's port
+- `ISOLA_{SERVICE}_URL` - Other service's proxy URL
+
+### Configuration (.isola.toml)
+```toml
+[services.frontend]
+command = "npm run dev"
+port_env = "PORT"
+port_range = [3100, 3199]
+
+[services.backend]
+command = "go run ."
+port_range = [8100, 8199]
+```
+
+### Troubleshooting
+- Service won't start → `isola doctor`, check logs in `~/.isola/logs/`
+- Port conflict → `lsof -i :<port>`, then `isola restart`
+- Proxy issues → Ensure `isola proxy start` ran
