@@ -55,19 +55,3 @@ func TestBuildURL_VariousInputs(t *testing.T) {
 		})
 	}
 }
-
-func TestOpenDoesNotPanic(t *testing.T) {
-	// Smoke test: calling Open with an invalid URL should not panic.
-	// We don't check the error since the browser command may or may not
-	// be available in the test environment.
-	_ = Open("http://localhost:0/test")
-}
-
-func TestOpenReturnsNoError(t *testing.T) {
-	// On macOS/Linux with a desktop, Open should succeed for a valid URL.
-	// We can't assert on error reliably in CI, but we can ensure no panic.
-	err := Open("http://example.com")
-	// If this is a headless CI environment, the command may fail,
-	// but it shouldn't panic.
-	_ = err
-}

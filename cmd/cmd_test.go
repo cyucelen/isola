@@ -97,7 +97,6 @@ func resetRootCmd() {
 	downPrune = false
 	upAll = false
 	upService = ""
-	openService = ""
 	logsFollow = false
 	logsTail = 50
 	logsService = ""
