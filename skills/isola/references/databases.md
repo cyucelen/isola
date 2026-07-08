@@ -52,8 +52,9 @@ not work on Redis Cluster (single-DB only).
 
 - **On `isola up`**: each accessory is brought up (created from `clone_from` if
   absent, reused if present) and its `inject` var (e.g. `DATABASE_URL`) is set in
-  every service's environment. If it fails, isola warns and starts services
-  anyway, just without that accessory's injected var.
+  every service's environment, and upserted into the worktree's `.env` if it has
+  one (only that key). If it fails, isola warns and starts services anyway, just
+  without that accessory's injected var.
 - **On `isola down --prune`** (after `git worktree remove`): databases isola
   recorded creating are dropped. It never drops `clone_from` or the server db.
 

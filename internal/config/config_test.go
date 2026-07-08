@@ -482,3 +482,45 @@ server_url = "postgres://isola@localhost:5432/postgres"
 		t.Fatalf("Load() error = %v, want 'kind must not be empty'", err)
 	}
 }
+
+func TestFilesToCopy(t *testing.T) {
+	svc := `
+[services.web]
+command = "npm start"
+port_range = { min = 3100, max = 3199 }
+proxy_port = 3000
+`
+	// copy_files is a top-level key, so it must precede any [section] header.
+	load := func(t *testing.T, prefix string) *Config {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, FileName), []byte(prefix+svc), 0644); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(dir)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		return cfg
+	}
+
+	t.Run("unset defaults to .env", func(t *testing.T) {
+		got := load(t, "").FilesToCopy()
+		if len(got) != 1 || got[0] != ".env" {
+			t.Errorf("FilesToCopy() = %v, want [.env]", got)
+		}
+	})
+
+	t.Run("explicit list", func(t *testing.T) {
+		got := load(t, "copy_files = [\".env.local\", \"config/x\"]\n").FilesToCopy()
+		if len(got) != 2 || got[0] != ".env.local" || got[1] != "config/x" {
+			t.Errorf("FilesToCopy() = %v", got)
+		}
+	})
+
+	t.Run("empty list disables", func(t *testing.T) {
+		got := load(t, "copy_files = []\n").FilesToCopy()
+		if len(got) != 0 {
+			t.Errorf("FilesToCopy() = %v, want empty (disabled)", got)
+		}
+	})
+}

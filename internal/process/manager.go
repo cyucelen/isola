@@ -10,6 +10,7 @@ import (
 
 	"github.com/cyucelen/isola/internal/accessory"
 	"github.com/cyucelen/isola/internal/config"
+	"github.com/cyucelen/isola/internal/copyfiles"
 	"github.com/cyucelen/isola/internal/git"
 	"github.com/cyucelen/isola/internal/logging"
 	"github.com/cyucelen/isola/internal/port"
@@ -130,6 +131,17 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 	// start (without that accessory's env), so a down dependency never blocks
 	// working on the rest of the worktree.
 	accEnv := m.provisionAccessories(tree)
+
+	// Write the accessory URLs into the worktree's .env (if it has one) so tools
+	// that read .env directly, not just the process environment, see this
+	// worktree's isolated database/cache. Only these keys are touched.
+	if len(accEnv) > 0 {
+		if changed, err := copyfiles.UpsertEnv(filepath.Join(tree.Path, ".env"), accEnv); err != nil {
+			logging.Warn("updating .env for %s: %v", tree.Branch, err)
+		} else if len(changed) > 0 {
+			logging.Info("Set %s in .env for %s", strings.Join(changed, ", "), tree.Branch)
+		}
+	}
 
 	for _, svcName := range services {
 		p, ok := portMap[svcName]

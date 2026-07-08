@@ -39,6 +39,15 @@ isola injects these into every service: `PORT`, `ISOLA_BRANCH`,
 `ISOLA_<SERVICE>_URL` for cross-service wiring. Add your own under `[env]` or
 per service; values may reference `${VAR}` (e.g. `API_URL = "${ISOLA_BACKEND_URL}"`).
 
+Git worktrees omit gitignored files, so a new worktree has no `.env`. On `isola
+up`, isola copies files matching `copy_files` (default `[".env"]`) from the main
+worktree into each worktree, never overwriting an existing one. It's a top-level
+key, so put it above any `[section]`; set `copy_files = []` to disable:
+
+```toml
+copy_files = [".env", ".env.*"]
+```
+
 ## 3. Optional: HTTPS
 
 The proxy auto-starts on `isola up`. To make the auto-started proxy serve

@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/cyucelen/isola/internal/copyfiles"
 	"github.com/cyucelen/isola/internal/git"
 	"github.com/cyucelen/isola/internal/logging"
 	"github.com/cyucelen/isola/internal/port"
@@ -72,6 +74,16 @@ var upCmd = &cobra.Command{
 				continue
 			}
 			logging.Verbose("starting services for worktree %s (%s)", tree.Branch, tree.Path)
+
+			// Copy gitignored local files (e.g. .env) from the main worktree,
+			// since git worktrees don't include them. Never overwrites; a
+			// failure is a warning, not a blocker.
+			if copied, err := copyfiles.Sync(cfg.FilesToCopy(), stateRoot, tree.Path); err != nil {
+				logging.Warn("copying files into %s: %v", tree.Branch, err)
+			} else if len(copied) > 0 {
+				logging.Info("Copied %s into %s", strings.Join(copied, ", "), tree.Branch)
+			}
+
 			results := mgr.StartServices(&tree, upService)
 			for _, r := range results {
 				if r.Err != nil {

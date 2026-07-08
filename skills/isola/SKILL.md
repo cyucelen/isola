@@ -30,6 +30,8 @@ isola doctor                   # health checks
 Service URLs: `http://<branch-slug>.localhost:<proxy_port>` (bare `localhost` = `main`).
 Injected env: `PORT`, `ISOLA_BRANCH`, `ISOLA_BRANCH_SLUG`, `ISOLA_SERVICE`,
 `ISOLA_<SVC>_PORT`, `ISOLA_<SVC>_URL`, plus any accessory `inject` var.
+On `up`, gitignored files matching `copy_files` (default `[".env"]`, a top-level
+key) are copied from the main worktree into each worktree, never overwriting.
 
 ## References
 

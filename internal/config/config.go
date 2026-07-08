@@ -26,6 +26,19 @@ type Config struct {
 	Meta toml.MetaData `toml:"-"`
 	// Proxy configures the reverse proxy that `isola up` auto-starts.
 	Proxy ProxyConfig `toml:"proxy"`
+	// CopyFiles lists glob patterns for gitignored files copied from the main
+	// worktree into each worktree on `isola up` (git worktrees omit gitignored
+	// files). Unset means the default [".env"]; an explicit empty list disables.
+	CopyFiles []string `toml:"copy_files"`
+}
+
+// FilesToCopy returns the glob patterns of files to copy into each worktree.
+// Unset defaults to [".env"]; an explicit `copy_files = []` disables copying.
+func (c *Config) FilesToCopy() []string {
+	if c.CopyFiles == nil {
+		return []string{".env"}
+	}
+	return c.CopyFiles
 }
 
 // ProxyConfig controls the reverse proxy `isola up` starts automatically.
@@ -219,6 +232,12 @@ func Init(dir string) (string, error) {
 
 	content := `# isola - Git Worktree Server Manager configuration
 # See: https://github.com/cyucelen/isola
+
+# --- Files copied into each worktree ---
+# Gitignored files (absent from new worktrees) copied from the main worktree on
+# 'isola up'. Existing files are never overwritten. Defaults to [".env"]; set to
+# [] to disable. Must stay above the [sections] below (it is a top-level key).
+# copy_files = [".env", ".env.*"]
 
 # --- Service definitions ---
 # Define services to run per worktree.
