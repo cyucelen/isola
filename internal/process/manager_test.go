@@ -87,10 +87,7 @@ inject = "DATABASE_URL"
 `)
 	tree := &git.Worktree{Path: t.TempDir(), Branch: "feature/auth"}
 
-	env, results, ok := mgr.provisionAccessories(tree)
-	if !ok {
-		t.Fatalf("expected ok, got results %+v", results)
-	}
+	env := mgr.provisionAccessories(tree)
 	if env["DATABASE_URL"] != "fake://feature-auth" {
 		t.Errorf("injected env = %v", env)
 	}
@@ -110,13 +107,13 @@ command = "sleep 60"
 port_range = { min = 19100, max = 19199 }
 proxy_port = 3000
 `)
-	env, results, ok := mgr.provisionAccessories(&git.Worktree{Path: t.TempDir(), Branch: "main"})
-	if !ok || len(results) != 0 || len(env) != 0 {
-		t.Errorf("no accessories should be a no-op: ok=%v results=%+v env=%v", ok, results, env)
+	env := mgr.provisionAccessories(&git.Worktree{Path: t.TempDir(), Branch: "main"})
+	if len(env) != 0 {
+		t.Errorf("no accessories should yield empty env, got %v", env)
 	}
 }
 
-func TestStartServicesBlockedByAccessoryFailure(t *testing.T) {
+func TestStartServicesProceedsOnAccessoryFailure(t *testing.T) {
 	mgr, store := managerWithConfig(t, `
 [services.web]
 command = "sleep 60"
@@ -130,30 +127,31 @@ fail = true
 	tree := &git.Worktree{Path: t.TempDir(), Branch: "main"}
 
 	results := mgr.StartServices(tree, "")
+	defer mgr.StopServices(tree, "")
 
-	// The web service must not have started.
-	for _, r := range results {
-		if r.Service == "web" && r.Err == nil {
-			t.Error("web service should not start when accessory provisioning fails")
+	// A failed accessory only warns; the web service must still start.
+	var web *ServiceResult
+	for i := range results {
+		if results[i].Service == "web" {
+			web = &results[i]
 		}
 	}
-	if _, ok := mgr.getRunner("main:web"); ok {
-		t.Error("no runner should exist for web")
+	if web == nil {
+		t.Fatal("no result for web service")
 	}
-	// The accessory failure should be surfaced.
-	sawErr := false
-	for _, r := range results {
-		if r.Err != nil {
-			sawErr = true
-		}
+	if web.Err != nil {
+		t.Errorf("web should start despite accessory failure, got err: %v", web.Err)
 	}
-	if !sawErr {
-		t.Error("expected an accessory error in results")
+	if web.PID <= 0 {
+		t.Errorf("web should have a running PID, got %d", web.PID)
+	}
+	if _, ok := mgr.getRunner("main:web"); !ok {
+		t.Error("a runner should exist for web")
 	}
 
 	st, _ := store.Load()
-	if ss := state.GetServiceState(st, "main", "web"); ss != nil && ss.Status == state.StatusRunning {
-		t.Error("web should not be recorded running")
+	if ss := state.GetServiceState(st, "main", "web"); ss == nil || ss.Status != state.StatusRunning {
+		t.Errorf("web should be recorded running, got %+v", ss)
 	}
 }
 

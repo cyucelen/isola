@@ -125,14 +125,11 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 
 	slug := tree.Slug()
 
-	// Provision per-worktree accessories (databases, ...) and collect the env
-	// vars they inject. If any accessory fails, do not start services against a
-	// half-provisioned environment.
-	accEnv, accResults, accOK := m.provisionAccessories(tree)
-	results = append(results, accResults...)
-	if !accOK {
-		return results
-	}
+	// Bring up per-worktree accessories (databases, ...) and collect the env vars
+	// they inject. A failed accessory only warns and is skipped; services still
+	// start (without that accessory's env), so a down dependency never blocks
+	// working on the rest of the worktree.
+	accEnv := m.provisionAccessories(tree)
 
 	for _, svcName := range services {
 		p, ok := portMap[svcName]
@@ -213,27 +210,29 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 	return results
 }
 
-// provisionAccessories provisions every configured accessory for the worktree,
+// provisionAccessories brings up every configured accessory for the worktree,
 // recording each in state and returning the env vars to inject into services.
-// The bool is false if any accessory failed (in which case callers should not
-// start services). Successes are logged; failures are returned as error
-// ServiceResults. With no accessories configured it is a no-op. Once a branch's
-// accessories provision successfully the result is cached for this Manager's
-// lifetime, so later calls return it without touching the server.
-func (m *Manager) provisionAccessories(tree *git.Worktree) (map[string]string, []ServiceResult, bool) {
+// A failure never blocks service start: it is logged as a warning and the
+// service simply runs without that accessory's injected var (so the app falls
+// back to its own config). With no accessories configured it is a no-op. Once a
+// branch's accessories all succeed the env is cached for this Manager's
+// lifetime, so later calls return it without touching the server; a partial
+// result is not cached, so a transient failure is retried on the next call.
+func (m *Manager) provisionAccessories(tree *git.Worktree) map[string]string {
 	if env, ok := m.cachedAccessoryEnv(tree.Branch); ok {
-		return env, nil, true
+		return env
 	}
 
 	env := map[string]string{}
 
 	accs, err := accessory.BuildAll(m.cfg)
 	if err != nil {
-		return env, []ServiceResult{{Branch: tree.Branch, Service: "accessories", Err: err}}, false
+		logging.Warn("skipping accessories for %s: %v", tree.Branch, err)
+		return env
 	}
 	if len(accs) == 0 {
 		m.cacheAccessoryEnv(tree.Branch, env)
-		return env, nil, true
+		return env
 	}
 
 	names := make([]string, 0, len(accs))
@@ -244,18 +243,16 @@ func (m *Manager) provisionAccessories(tree *git.Worktree) (map[string]string, [
 
 	wt := accessory.FromWorktree(tree)
 
-	var results []ServiceResult
-	ok := true
+	complete := true
 	for _, name := range names {
 		a := accs[name]
 		ctx, cancel := context.WithTimeout(context.Background(), accessory.OpTimeout)
 		prov, err := a.Provision(ctx, wt)
 		cancel()
 		if err != nil {
-			results = append(results, ServiceResult{
-				Branch: tree.Branch, Service: "accessory:" + name, Err: err,
-			})
-			ok = false
+			logging.Warn("accessory %s (%s) for %s could not be brought up; continuing without its env: %v",
+				name, a.Kind(), tree.Branch, err)
+			complete = false
 			continue
 		}
 		for k, v := range prov.Env {
@@ -264,12 +261,12 @@ func (m *Manager) provisionAccessories(tree *git.Worktree) (map[string]string, [
 		if err := m.store.RecordAccessory(tree.Branch, name, a.Kind(), prov.Handle); err != nil {
 			logging.Warn("failed to record accessory state %s/%s: %v", tree.Branch, name, err)
 		}
-		logging.Info("Provisioning %s (%s) for %s ...", name, a.Kind(), tree.Branch)
+		logging.Info("Bringing up %s (%s) for %s ...", name, a.Kind(), tree.Branch)
 	}
-	if ok {
+	if complete {
 		m.cacheAccessoryEnv(tree.Branch, env)
 	}
-	return env, results, ok
+	return env
 }
 
 // StopServices stops services for the given worktree.
