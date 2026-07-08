@@ -112,27 +112,14 @@ To give each worktree its own database, add an `[accessories.primary]` block
 ### 4. Start services
 
 ```bash
-isola up            # Start this worktree's services (and the proxy)
-isola up --all      # Start services for ALL worktrees
+isola up            # this worktree's services (also auto-starts the proxy)
+isola up --all      # every worktree's services
 ```
 
-`isola up` also **auto-starts the reverse proxy** in the background, so your
-services are immediately reachable at `*.localhost`. It keeps running until you
-`isola proxy stop`.
-
-```bash
-# Opt out of auto-start with [proxy] enabled = false, then run it yourself:
-isola proxy start            # foreground proxy
-isola proxy start --https    # HTTPS with auto-generated certificates
-
-# For auto-started HTTPS instead, set [proxy] https = true in .isola.toml.
-```
-
-### 5. Open in browser
-
-Service URLs follow the pattern `http://<branch-slug>.localhost:<proxy_port>`
-(e.g. `http://main.localhost:3000`). Select a service in the TUI dashboard
-(`isola dash`) and press the open key to launch it in your default browser.
+Your services are now reachable at `http://<branch-slug>.localhost:<proxy_port>`
+(e.g. `http://main.localhost:3000`; bare `localhost` maps to `main`). The proxy
+runs in the background until `isola proxy stop`; HTTPS and opting out live under
+[`[proxy]`](#proxy). Manage everything interactively with `isola dash`.
 
 ---
 
@@ -160,6 +147,25 @@ Service URLs follow the pattern `http://<branch-slug>.localhost:<proxy_port>`
 ## Configuration Reference
 
 The `.isola.toml` file lives at the root of your git repository.
+
+### `copy_files`
+
+Git worktrees don't include gitignored files, so a fresh worktree has no `.env`.
+On `isola up`, isola copies files matching these glob patterns from the **main
+worktree** into each worktree, **never overwriting** a file that already exists
+there. Defaults to `[".env"]`; set `copy_files = []` to disable.
+
+```toml
+# Top-level key: must appear ABOVE any [section] header.
+copy_files = [".env", ".env.*", "config/local.yml"]
+```
+
+After copying, isola upserts each accessory's `inject` key (e.g. `DATABASE_URL`)
+into the worktree's `.env`, setting it to that worktree's isolated URL. It only
+touches those keys (the rest of your `.env` is left alone), so tools that read
+`.env` directly, not just the process environment, still get an isolated
+database even if the copied `.env` named a shared one. See
+[Environment Variables](#environment-variables).
 
 ### `[services.<name>]`
 
@@ -204,7 +210,9 @@ proxy_port = 3000
 
 ### `[env]`
 
-Global environment variables injected into all services.
+Global environment variables injected into all services. See
+[Environment Variables](#environment-variables) for how these combine with
+isola's injected variables and per-service/per-worktree overrides.
 
 ```toml
 [env]
@@ -217,7 +225,8 @@ LOG_LEVEL = "debug"
 Give each worktree its own isolated stateful dependency. isola brings it up on
 `isola up` and drops it on `isola down --prune`, connecting to your existing
 server (it never manages the server itself) and injecting a connection string
-into your services. The fields depend on `kind`; two built-in kinds ship today.
+into your services (both the process environment and, if the worktree has one,
+its `.env`). The fields depend on `kind`; two built-in kinds ship today.
 
 **`kind = "postgres"`** clones a seeded template database per worktree:
 
@@ -306,18 +315,38 @@ services.backend.env = { DEBUG = "1" }
 
 ## Environment Variables
 
-isola automatically injects the following environment variables into every service process:
+A service's environment is assembled from several sources. When the same
+variable is set in more than one, the later one wins, so the effective
+precedence is (highest first):
 
-| Variable            | Example                                             | Description                       |
-| ------------------- | --------------------------------------------------- | --------------------------------- |
-| `PORT`              | `3117`                                              | Allocated port for this service   |
-| `ISOLA_BRANCH`         | `feature/auth`                                      | Current branch name               |
-| `ISOLA_BRANCH_SLUG`    | `feature-auth`                                      | URL-safe slug of the branch name  |
-| `ISOLA_SERVICE`        | `frontend`                                          | Name of the current service       |
+1. **Accessory connection strings** (`DATABASE_URL`, `REDIS_URL`, …) that isola
+   injects for the worktree's isolated database or cache. Authoritative, so
+   per-worktree isolation holds. See [`[accessories.<name>]`](#accessoriesname).
+2. **isola built-ins**: the auto-injected variables listed below.
+3. **Your config**: `[worktrees."<branch>"]` overrides beat per-service
+   `[services.<name>].env`, which beats global `[env]`.
+4. **Your shell**: variables inherited from the environment isola runs in.
+
+Separately, `.env`-style files are copied into each worktree by
+[`copy_files`](#copy_files), a layer your app reads directly. isola keeps the two
+in sync for accessories: it writes each accessory's `inject` key into the copied
+`.env` (only those keys), so whether a tool reads the process environment or the
+`.env` file, it gets this worktree's isolated database or cache.
+
+### Injected by isola
+
+isola sets these on every service process:
+
+| Variable            | Example                                                | Description                       |
+| ------------------- | ------------------------------------------------------ | --------------------------------- |
+| `PORT`              | `3117`                                                 | Allocated port for this service   |
+| `ISOLA_BRANCH`         | `feature/auth`                                         | Current branch name               |
+| `ISOLA_BRANCH_SLUG`    | `feature-auth`                                         | URL-safe slug of the branch name  |
+| `ISOLA_SERVICE`        | `frontend`                                             | Name of the current service       |
 | `ISOLA_<SERVICE>_PORT` | `ISOLA_FRONTEND_PORT=3117`                             | Port of each sibling service      |
 | `ISOLA_<SERVICE>_URL`  | `ISOLA_BACKEND_URL=http://feature-auth.localhost:8000` | Proxy URL of each sibling service |
 
-This allows services to discover each other automatically:
+So services can discover each other automatically:
 
 ```js
 // next.config.js
@@ -332,6 +361,15 @@ module.exports = {
   },
 };
 ```
+
+### Setting your own
+
+Global variables go under `[env]`; per-service (`[services.<name>].env`) and
+per-worktree (`[worktrees."<branch>"].services.<name>.env`) overrides are in the
+[Configuration Reference](#configuration-reference). Values may reference
+`${VAR}`, expanded against the injected variables above and your shell (e.g.
+`API_URL = "${ISOLA_BACKEND_URL}"`); a bare `$` is left literal, so a password
+like `p$ssw0rd` survives unchanged.
 
 ---
 
@@ -409,66 +447,6 @@ Launch with `isola dash`:
 
 ---
 
-## Example Workflow
-
-```bash
-# You're working on a monorepo with frontend + backend
-cd my-project
-
-# Initialize isola
-isola init
-# Edit .isola.toml to define your services...
-
-# Create a feature branch worktree
-git worktree add ../my-project-feature-auth feature/auth
-
-# Start services on your current branch
-isola up
-# Starting frontend (port 3100) for main ...
-# Starting backend (port 8100) for main ...
-# ✓ 2 services started for main
-
-# Start services on ALL worktrees at once
-isola up --all
-# ✓ 4 services started
-
-# Check status
-isola ls
-# WORKTREE        SERVICE    PORT   STATUS    PID
-# main            frontend   3100   running   12345
-# main            backend    8100   running   12346
-# feature/auth    frontend   3117   running   12347
-# feature/auth    backend    8104   running   12348
-
-# JSON output (great for AI agents and scripts)
-isola ls --json
-# [{"worktree":"main","service":"frontend","port":3100,"status":"running",
-#   "pid":12345,"url":"http://main.localhost:3000","direct_url":"http://localhost:3100"}, ...]
-
-# The proxy was already auto-started by `isola up`, so services are reachable at:
-#   http://main.localhost:3000          -> frontend (main)
-#   http://main.localhost:8000          -> backend (main)
-#   http://feature-auth.localhost:3000  -> frontend (feature/auth)
-#   http://feature-auth.localhost:8000  -> backend (feature/auth)
-
-# For HTTPS (Secure Cookies, Service Workers, etc.), set [proxy] https = true,
-# or run the proxy manually:
-isola proxy start --https
-# Auto-generates certificates in .isola/certs/; access via https://main.localhost:3000
-
-# Trust the CA to remove browser warnings
-isola trust
-
-# Open a service in the browser from the TUI
-isola dash
-
-# When done
-isola down --all
-# ✓ 4 services stopped
-```
-
----
-
 ## Agent Skills
 
 isola ships an [Agent Skill](https://github.com/vercel-labs/skills) that teaches
@@ -536,8 +514,7 @@ isola completion powershell > isola.ps1
 ### Port conflict
 
 - Run `isola doctor` to check for port conflicts.
-- If a port is already in use, isola uses linear probing to find the next available port in the range.
-- If the entire range is exhausted, widen the `port_range` in `.isola.toml`.
+- If the range is exhausted, widen `port_range` in `.isola.toml`.
 
 ### Stale processes
 
@@ -548,7 +525,7 @@ isola completion powershell > isola.ps1
 ### Proxy not routing correctly
 
 - Ensure the proxy is running with `isola proxy start`.
-- Verify your browser resolves `*.localhost` (modern browsers do this per RFC 6761).
+- Verify your browser resolves `*.localhost` (all modern browsers do).
 - Check that the target service is actually running with `isola ls`.
 - The proxy routes based on the `Host` header subdomain, so access via `http://<branch-slug>.localhost:<proxy_port>`.
 
@@ -573,35 +550,18 @@ isola completion powershell > isola.ps1
 
 ## FAQ
 
-### Does `*.localhost` work in all browsers?
-
-Modern browsers (Chrome, Firefox, Edge, Safari) resolve `*.localhost` to `127.0.0.1` per [RFC 6761](https://tools.ietf.org/html/rfc6761). No `/etc/hosts` editing or DNS configuration is needed.
-
-### What happens if two worktrees hash to the same port?
-
-isola uses linear probing: if the hash-derived port is already taken, it tries the next port in the range until it finds a free one.
-
 ### Can I use isola without the proxy?
 
-Yes. `isola up` starts your services with allocated ports. You can access them directly at `localhost:<port>`. The proxy is optional.
+Yes. `isola up` starts your services on their allocated ports; reach them
+directly at `localhost:<port>`. The proxy (and its `*.localhost` routing) is
+optional; disable auto-start with `[proxy] enabled = false`.
 
-### Where are logs stored?
+### Where does isola keep its files?
 
-Service logs are written to `.isola/logs/<branch-slug>.<service>.log` in the main worktree's root.
-
-### Where is state stored?
-
-Runtime state (PIDs, port assignments) is stored in `.isola/state.json` with file-level locking for concurrent access safety.
-
-### Can I run different commands per branch?
-
-Yes, use `[worktrees."branch-name"]` overrides in `.isola.toml`:
-
-```toml
-[worktrees."feature/auth"]
-services.backend.command = "python manage.py runserver --settings=auth 0.0.0.0:$PORT"
-services.backend.env = { DEBUG = "1" }
-```
+All under `.isola/` in the main worktree: service logs at
+`.isola/logs/<branch-slug>.<service>.log`, runtime state (PIDs, port
+assignments) in `.isola/state.json` (file-locked for concurrent access), and
+auto-generated HTTPS certs in `.isola/certs/`.
 
 ---
 
@@ -629,6 +589,7 @@ isola/
 │   │   ├── accessory.go         # Driver interface + registry
 │   │   └── postgres/postgres.go # Postgres database-per-worktree driver (pgx)
 │   ├── expand/expand.go         # Shared ${VAR} interpolation
+│   ├── copyfiles/copyfiles.go   # Copy gitignored files (.env) into worktrees
 │   ├── git/
 │   │   ├── repo.go              # Repo root / common dir detection
 │   │   └── worktree.go          # Worktree listing & branch slugs
