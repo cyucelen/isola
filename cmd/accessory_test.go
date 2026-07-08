@@ -106,9 +106,9 @@ func TestAccessoryProvisionAndDrop(t *testing.T) {
 
 	cmdFakeDropped = nil
 	resetRootCmd()
-	rootCmd.SetArgs([]string{"accessory", "provision"})
+	rootCmd.SetArgs([]string{"accessory", "up"})
 	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("accessory provision: %v", err)
+		t.Fatalf("accessory up: %v", err)
 	}
 
 	// The current (main) worktree's accessory should be recorded.

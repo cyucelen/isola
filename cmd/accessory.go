@@ -19,17 +19,17 @@ import (
 var accessoryCmd = &cobra.Command{
 	Use:   "accessory",
 	Short: "Manage per-worktree accessories (databases, …)",
-	Long: `Provision, reset, and drop the isolated stateful dependencies declared
+	Long: `Bring up, reset, and drop the isolated stateful dependencies declared
 under [accessories] in .isola.toml.
 
-Accessories are normally provisioned automatically on 'isola up' and torn down
+Accessories are normally brought up automatically on 'isola up' and torn down
 on 'isola down --prune'. These verbs let you operate them out of band. Pass a
 name to act on a single accessory; omit it to act on all.`,
 }
 
 var accessoryLsCmd = &cobra.Command{
 	Use:   "ls",
-	Short: "List accessories and their provisioned state",
+	Short: "List accessories and their state",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -59,7 +59,7 @@ var accessoryLsCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-		_, _ = fmt.Fprintln(w, "WORKTREE\tACCESSORY\tKIND\tRESOURCE\tPROVISIONED")
+		_, _ = fmt.Fprintln(w, "WORKTREE\tACCESSORY\tKIND\tRESOURCE\tREADY")
 		for _, tree := range trees {
 			if tree.IsBare {
 				continue
@@ -77,9 +77,9 @@ var accessoryLsCmd = &cobra.Command{
 	},
 }
 
-var accessoryProvisionCmd = &cobra.Command{
-	Use:   "provision [name]",
-	Short: "Provision accessories for the current worktree (reuse if present)",
+var accessoryUpCmd = &cobra.Command{
+	Use:   "up [name]",
+	Short: "Bring up the current worktree's accessories (reuse if present)",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return accessoryForEach(args, func(ctx context.Context, store *state.FileStore, wt accessory.WorktreeInfo, name string, a accessory.Accessory) error {
@@ -88,7 +88,7 @@ var accessoryProvisionCmd = &cobra.Command{
 				return err
 			}
 			recordAccessory(store, wt.Branch, name, a.Kind(), prov.Handle)
-			logging.Info("Provisioned %s (%s) for %s", name, a.Kind(), wt.Branch)
+			logging.Info("Brought up %s (%s) for %s", name, a.Kind(), wt.Branch)
 			for k, v := range prov.Env {
 				logging.Info("  %s=%s", k, v)
 			}
@@ -120,7 +120,7 @@ var accessoryResetCmd = &cobra.Command{
 
 var accessoryDropCmd = &cobra.Command{
 	Use:   "drop [name]",
-	Short: "Drop accessories provisioned for the current worktree",
+	Short: "Drop the current worktree's accessories",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return accessoryForEach(args, func(ctx context.Context, store *state.FileStore, wt accessory.WorktreeInfo, name string, a accessory.Accessory) error {
@@ -261,6 +261,6 @@ func forgetAccessory(store *state.FileStore, branch, name string) {
 }
 
 func init() {
-	accessoryCmd.AddCommand(accessoryLsCmd, accessoryProvisionCmd, accessoryResetCmd, accessoryDropCmd)
+	accessoryCmd.AddCommand(accessoryLsCmd, accessoryUpCmd, accessoryResetCmd, accessoryDropCmd)
 	rootCmd.AddCommand(accessoryCmd)
 }
