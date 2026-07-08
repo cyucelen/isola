@@ -9,6 +9,7 @@ import (
 	"github.com/cyucelen/isola/internal/logging"
 	"github.com/cyucelen/isola/internal/port"
 	"github.com/cyucelen/isola/internal/process"
+	"github.com/cyucelen/isola/internal/proxy"
 	"github.com/cyucelen/isola/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -91,6 +92,25 @@ var upCmd = &cobra.Command{
 				logging.Info("✓ %d %s started", totalStarted, noun)
 			} else {
 				logging.Info("✓ %d %s started for %s", totalStarted, noun, trees[0].Branch)
+			}
+		}
+
+		// Auto-start the reverse proxy in the background (unless disabled) so
+		// services are reachable at *.localhost without a separate command.
+		if cfg.AutoProxyEnabled() {
+			logDir := filepath.Join(store.Dir(), "logs")
+			started, err := proxy.EnsureRunning(store, cwd, logDir, cfg.Proxy.HTTPS)
+			scheme := "http"
+			if cfg.Proxy.HTTPS {
+				scheme = "https"
+			}
+			switch {
+			case err != nil:
+				logging.Warn("proxy auto-start failed: %v", err)
+			case started:
+				logging.Info("✓ proxy started; reach services at %s://<branch-slug>.localhost:<proxy_port>", scheme)
+			default:
+				logging.Verbose("proxy already running")
 			}
 		}
 

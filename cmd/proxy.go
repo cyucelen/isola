@@ -52,23 +52,30 @@ Use --https to enable HTTPS with auto-generated certificates, or
 			}
 
 			if certFile == "" {
-				// Auto-generate certificates.
+				// Auto-generate a dev CA, then mint a leaf certificate per TLS
+				// handshake keyed on the SNI host. This makes any
+				// <branch-slug>.localhost verify without a "*.localhost"
+				// wildcard, which strict TLS clients reject.
 				certDir := filepath.Join(stateDir, "certs")
 				paths, err := cert.EnsureCerts(certDir)
 				if err != nil {
 					return fmt.Errorf("generating certificates: %w", err)
 				}
-				certFile = paths.ServerCert
-				keyFile = paths.ServerKey
-				logging.Verbose("using auto-generated certificates in %s", certDir)
-			}
-
-			keypair, err := tls.LoadX509KeyPair(certFile, keyFile)
-			if err != nil {
-				return fmt.Errorf("loading TLS certificate: %w", err)
-			}
-			tlsConfig = &tls.Config{
-				Certificates: []tls.Certificate{keypair},
+				getCert, err := cert.NewSNIGetCertificate(paths)
+				if err != nil {
+					return fmt.Errorf("initializing certificate minting: %w", err)
+				}
+				tlsConfig = &tls.Config{GetCertificate: getCert}
+				logging.Verbose("using auto-generated CA in %s (minting per-host certs)", certDir)
+			} else {
+				// Bring-your-own certificate and key.
+				keypair, err := tls.LoadX509KeyPair(certFile, keyFile)
+				if err != nil {
+					return fmt.Errorf("loading TLS certificate: %w", err)
+				}
+				tlsConfig = &tls.Config{
+					Certificates: []tls.Certificate{keypair},
+				}
 			}
 		}
 
@@ -158,35 +165,11 @@ and updates the state to stopped.`,
 			return fmt.Errorf("creating state store: %w", err)
 		}
 
-		var st *state.State
-		if err := store.WithLock(func() error {
-			var e error
-			st, e = store.Load()
-			return e
-		}); err != nil {
-			return fmt.Errorf("loading proxy state: %w", err)
+		stopped, err := proxy.Stop(store)
+		if err != nil {
+			return fmt.Errorf("stopping proxy: %w", err)
 		}
-
-		if st.Proxy.PID > 0 && st.Proxy.Status == state.StatusRunning {
-			// Send SIGTERM to the proxy process.
-			proc, err := os.FindProcess(st.Proxy.PID)
-			if err == nil {
-				if sigErr := proc.Signal(syscall.SIGTERM); sigErr != nil {
-					logging.Warn("failed to send SIGTERM to proxy process %d: %v", st.Proxy.PID, sigErr)
-				}
-			}
-
-			if err := store.WithLock(func() error {
-				st, e := store.Load()
-				if e != nil {
-					return e
-				}
-				st.Proxy = state.ProxyState{Status: state.StatusStopped}
-				return store.Save(st)
-			}); err != nil {
-				logging.Warn("failed to update proxy state: %v", err)
-			}
-
+		if stopped {
 			fmt.Println("Proxy stopped.")
 		} else {
 			fmt.Println("Proxy is not running.")

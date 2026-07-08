@@ -236,11 +236,12 @@ func TestModelUpdate_ActionResultMsg(t *testing.T) {
 func TestModelUpdate_ToggleProxy(t *testing.T) {
 	m := testModel(t, nil)
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-	model := mustModel(t, updated)
-
-	if model.statusMsg == "" {
-		t.Error("toggle proxy should set a status message")
+	// Pressing 'p' dispatches an async command that starts/stops the proxy; it
+	// must not be executed here (it would self-exec the test binary), so we only
+	// assert the keybinding is wired to a command.
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if cmd == nil {
+		t.Error("toggle proxy should return a command")
 	}
 }
 

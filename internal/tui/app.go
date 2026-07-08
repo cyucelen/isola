@@ -16,6 +16,7 @@ import (
 	"github.com/cyucelen/isola/internal/logging"
 	"github.com/cyucelen/isola/internal/port"
 	"github.com/cyucelen/isola/internal/process"
+	"github.com/cyucelen/isola/internal/proxy"
 	"github.com/cyucelen/isola/internal/state"
 )
 
@@ -203,8 +204,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.stopAll
 
 	case key.Matches(msg, m.keys.ToggleProxy):
-		m.statusMsg = "Proxy toggle not supported in dashboard (use 'isola proxy start' in a separate terminal)"
-		return m, nil
+		return m, m.toggleProxy
 
 	case key.Matches(msg, m.keys.ViewLogs):
 		return m, m.viewLogs
@@ -318,6 +318,28 @@ func (m *Model) restartSelected() tea.Msg {
 		}
 	}
 	return ActionResultMsg{Message: fmt.Sprintf("Restarted %s for %s", row.Service, row.Branch)}
+}
+
+func (m *Model) toggleProxy() tea.Msg {
+	if m.proxyRunning {
+		stopped, err := proxy.Stop(m.store)
+		if err != nil {
+			return ActionResultMsg{Message: fmt.Sprintf("Proxy stop failed: %v", err), IsError: true}
+		}
+		if stopped {
+			return ActionResultMsg{Message: "Proxy stopped"}
+		}
+		return ActionResultMsg{Message: "Proxy was not running"}
+	}
+	logDir := filepath.Join(m.store.Dir(), "logs")
+	started, err := proxy.EnsureRunning(m.store, m.repoRoot, logDir, m.cfg.Proxy.HTTPS)
+	if err != nil {
+		return ActionResultMsg{Message: fmt.Sprintf("Proxy start failed: %v", err), IsError: true}
+	}
+	if started {
+		return ActionResultMsg{Message: "Proxy started"}
+	}
+	return ActionResultMsg{Message: "Proxy already running"}
 }
 
 func (m *Model) openSelected() tea.Msg {
