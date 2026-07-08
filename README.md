@@ -41,7 +41,7 @@ to build and test against, without stepping on anything else's ports or data.
 ## Features
 
 - **Per-worktree isolation**: each git worktree runs as its own environment with its own processes, ports, URLs, env vars, and database
-- **Isolated databases**: every worktree gets its own database, cloned from a seeded template and dropped with the worktree (Postgres today; the driver model extends to Redis and more)
+- **Isolated databases**: every worktree gets its own database, created on `up` and dropped with the worktree (Postgres cloned from a template, Redis by logical DB; the driver model extends to more)
 - **Automatic port allocation**: deterministic hash-based ports (FNV32) with per-service ranges; no conflicts across worktrees
 - **Subdomain reverse proxy**: reach any worktree at `branch-name.localhost:<port>`, HTTP or HTTPS, no `/etc/hosts` editing; auto-starts in the background on `isola up`
 - **Environment injection**: `$PORT`, `$ISOLA_BRANCH`, `$ISOLA_BACKEND_URL`, `$DATABASE_URL`, etc. injected automatically so services (and databases) wire themselves up
@@ -214,15 +214,16 @@ LOG_LEVEL = "debug"
 
 ### `[accessories.<name>]`
 
-Give each worktree its own isolated stateful dependency (a database today).
-isola provisions it on `isola up` and drops it on `isola down --prune`. It
-connects to your existing Postgres (never manages the server itself) and clones
-a seeded template into a fresh database per worktree, injecting the connection
-string into your services.
+Give each worktree its own isolated stateful dependency. isola brings it up on
+`isola up` and drops it on `isola down --prune`, connecting to your existing
+server (it never manages the server itself) and injecting a connection string
+into your services. The fields depend on `kind`; two built-in kinds ship today.
+
+**`kind = "postgres"`** clones a seeded template database per worktree:
 
 | Field        | Type   | Required | Description                                                                              |
 | ------------ | ------ | -------- | ---------------------------------------------------------------------------------------- |
-| `kind`       | string | yes      | Driver backing the accessory. `postgres` today (bare names are built-in)                 |
+| `kind`       | string | yes      | `postgres` (bare names are built-in; `vendor/name` is reserved for third-party drivers)  |
 | `server_url` | string | yes      | Existing server + maintenance database, used to create/drop. Must be a `postgres://` URL |
 | `clone_from` | string | yes      | Seeded template database copied for each worktree (kept quiescent, never run against)    |
 | `name`       | string | yes      | Per-worktree database name; supports `${VAR}` (e.g. `${ISOLA_BRANCH_SLUG}`)               |
@@ -240,9 +241,34 @@ inject     = "DATABASE_URL"
 
 > [!NOTE]
 > The resolved `name` must be a legal Postgres identifier (≤ 63 bytes) and must
-> not equal `clone_from` or the `server_url` database, so isola never provisions
-> or resets a worktree on top of the template. Manage accessories out of band
-> with `isola accessory ls|provision|reset|drop [name]`.
+> not equal `clone_from` or the `server_url` database, so isola never creates
+> or resets a worktree on top of the template.
+
+**`kind = "redis"`** gives each worktree its own Redis logical database, allocated
+collision-free and flushed on reset/drop:
+
+| Field        | Type   | Required | Description                                                                     |
+| ------------ | ------ | -------- | ------------------------------------------------------------------------------- |
+| `kind`       | string | yes      | `redis`                                                                         |
+| `server_url` | string | yes      | Existing Redis server, e.g. `redis://localhost:6379`                            |
+| `inject`     | string | yes      | Env var set on services with the worktree's URL (e.g. `REDIS_URL`)              |
+| `databases`  | int    | no       | Number of logical DBs the server exposes (default `16`)                         |
+
+```toml
+[accessories.cache]
+kind       = "redis"
+server_url = "redis://localhost:6379"
+inject     = "REDIS_URL"
+```
+
+> [!NOTE]
+> Each worktree gets its own numbered logical DB (`redis://.../<n>`), so this caps
+> at the configured `databases` count (set it to match your server) and is not
+> for Redis Cluster (single DB only).
+> `reset` and `drop` run `FLUSHDB` on the worktree's DB.
+
+Manage accessories out of band with `isola accessory ls|up|reset|drop [name]`
+(`up` brings up this worktree's accessories, reusing any that already exist).
 
 ### `[proxy]`
 
@@ -594,7 +620,7 @@ isola/
 │   ├── proxy.go                 # isola proxy start|stop
 │   ├── trust.go                 # isola trust
 │   ├── logs.go                  # isola logs
-│   ├── accessory.go             # isola accessory ls|provision|reset|drop
+│   ├── accessory.go             # isola accessory ls|up|reset|drop
 │   └── version.go               # isola version
 ├── internal/
 │   ├── cert/cert.go             # CA + server certificate auto-generation

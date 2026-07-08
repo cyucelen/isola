@@ -23,7 +23,7 @@ isola dash                     # interactive TUI
 isola proxy start [--https]    # run the proxy manually (up auto-starts it); [proxy] enabled=false to opt out
 isola proxy stop               # stop the proxy (it is never auto-stopped)
 isola logs [worktree] [-f] [-n N] [-s svc]
-isola accessory ls|provision|reset|drop [name]    # per-worktree databases
+isola accessory ls|up|reset|drop [name]           # per-worktree databases (up = bring up / reuse)
 isola doctor                   # health checks
 ```
 

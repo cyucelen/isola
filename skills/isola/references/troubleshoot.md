@@ -43,10 +43,11 @@ isola trust           # install the local CA into the system trust store
 - **"collides with clone_from" / maintenance database**: the resolved db `name`
   equals `clone_from` or the server db. Change the `name` template or rename the
   branch (see `references/databases.md`).
-- **Provisioning fails and services won't start**: isola deliberately blocks
-  service start when an accessory can't be provisioned. Check the Postgres
-  `server_url` is reachable and `clone_from` exists. `isola doctor` and the
-  command's error output name the cause.
+- **An accessory can't be brought up**: isola warns and starts services anyway,
+  but without that accessory's injected var (e.g. `DATABASE_URL`), so your app
+  falls back to its own config — watch for it connecting to the wrong database.
+  Check the Postgres `server_url` is reachable and `clone_from` exists; `isola
+  doctor` and the warning name the cause. Re-run `isola up` to retry.
 - **`CREATE DATABASE ... TEMPLATE` fails on a busy template**: `clone_from` must
   be quiescent; don't run services against it. isola terminates lingering
   connections before cloning, but keep it a seed-only database.

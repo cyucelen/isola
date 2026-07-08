@@ -188,18 +188,35 @@ for.**
   connection through a `conn`/`opener` seam, so the client is swappable without
   touching driver logic or tests.
 
+### Redis driver
+
+The second built-in kind, added with no changes to shared code (a new package +
+`Register("redis", …)` + a blank import), validating the extensibility model.
+Redis has no cheap "clone a database" primitive, so instead of a template it
+assigns each worktree its own **numbered logical DB** (`redis://host:port/<n>`)
+and injects that URL. Indices are allocated collision-free with the same
+hash-plus-linear-probe idea as the port allocator, using an owner-marker key
+inside each DB (which the owning worktree has to itself) as the coordination
+store — so no central registry or interface change is needed for a driver that,
+unlike Postgres, must allocate from a bounded pool. `Reset` (the optional
+capability) and `Drop` run `FLUSHDB`; `Reset`'s baseline is empty rather than a
+template. Trade-offs: capped at the server's logical-DB count (default 16) and
+unusable on Redis Cluster, which supports only DB 0. Uses the pure-Go `go-redis`
+client, mirroring the pgx choice.
+
 ### CLI
 
 An `isola accessory` command group operates accessories out of band, with a
-positional `[name]` to target one (default: all): `ls` (list provisioned
-resources), `provision` (create/reuse now), `reset` (restore to Template, only
-for resettable kinds), `drop` (tear down). The command noun matches the domain
-term — not `db`, which is Postgres-specific and would misread for a cache.
+positional `[name]` to target one (default: all): `ls` (list resources and
+state), `up` (bring up now, reusing any that exist), `reset` (restore to
+baseline, only for resettable kinds), `drop` (tear down). The command noun
+matches the domain term — not `db`, which is Postgres-specific and would misread
+for a cache.
 
 ### Extensibility staging
 
-- **Now:** in-tree Go drivers (postgres; later redis, mysql). Built-in kinds
-  use bare names (`postgres`, `redis`).
+- **Now:** in-tree Go drivers (postgres and redis; later mysql, etc.). Built-in
+  kinds use bare names (`postgres`, `redis`).
 - **Later:** an external-executable driver protocol (Terraform-provider style)
   so third parties ship drivers as separate binaries, addressed by namespaced
   `kind = "vendor/name"`. The `Accessory` interface and registry are designed
