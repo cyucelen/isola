@@ -1,4 +1,4 @@
-# isola - Git Worktree Server Manager
+# isola
 
 [![CI](https://github.com/cyucelen/isola/actions/workflows/ci.yaml/badge.svg)](https://github.com/cyucelen/isola/actions/workflows/ci.yaml)
 [![codecov](https://codecov.io/gh/cyucelen/isola/branch/main/graph/badge.svg)](https://codecov.io/gh/cyucelen/isola)
@@ -6,19 +6,49 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/cyucelen/isola.svg)](https://pkg.go.dev/github.com/cyucelen/isola)
 ![Go Version](https://img.shields.io/github/go-mod/go-version/cyucelen/isola)
 
-**isola** automatically manages multiple dev servers per [git worktree](https://git-scm.com/docs/git-worktree) — with automatic port allocation, environment variable injection, and `*.localhost` subdomain routing via reverse proxy.
-
-> Japanese version: [README.ja.md](./README.ja.md)
+**Run many isolated dev environments on one machine, one per git worktree.**
+Each worktree gets its own services (stable ports + `*.localhost` URLs), its own
+environment variables, and its own database cloned from a template. No Docker,
+no `/etc/hosts`, no port juggling, and it's built for the age of parallel AI
+coding agents.
 
 ---
 
-## Credits & when to use portree instead
+## Why isola
 
-isola is a fork of **[portree](https://github.com/fairy-pitta/portree)** by [fairy-pitta](https://github.com/fairy-pitta), and builds directly on its worktree-aware process management, hash-based port allocation, and `*.localhost` reverse proxy. Huge thanks to the portree authors for that foundation.
+Git [worktrees](https://git-scm.com/docs/git-worktree) let you check out several
+branches at once. But the moment you *run* them, they collide.
 
-**If you just need per-worktree dev servers** — port allocation and subdomain routing — [portree](https://github.com/fairy-pitta/portree) is the simpler, focused tool. Go use it.
+Picture three things in flight: an AI agent refactoring on one branch, a spike on
+another, a hotfix on `main`.
 
-isola extends that model toward **full per-worktree environment isolation**: databases and other stateful accessories, cloned from a template and torn down together with the worktree.
+- They all try to bind `:3000` and `:5432`.
+- They migrate and seed the **same** dev database, so one branch's schema change
+  breaks another, and a destructive test on one wipes data the others still need.
+- You're juggling `.env` files, hunting down stray processes, and guessing which
+  server is which.
+
+**isola gives each worktree its own running environment:** processes, ports,
+`*.localhost` URLs, injected env vars, and its own database (cloned from a
+template, dropped with the worktree). So N branches, or N agents, run fully
+isolated, side by side, and clean up after themselves.
+
+Point your coding agents at it and each one gets a real, working, isolated stack
+to build and test against, without stepping on anything else's ports or data.
+
+---
+
+## Features
+
+- **Per-worktree isolation**: each git worktree runs as its own environment with its own processes, ports, URLs, env vars, and database
+- **Isolated databases**: every worktree gets its own database, cloned from a seeded template and dropped with the worktree (Postgres today; the driver model extends to Redis and more)
+- **Automatic port allocation**: deterministic hash-based ports (FNV32) with per-service ranges; no conflicts across worktrees
+- **Subdomain reverse proxy**: reach any worktree at `branch-name.localhost:<port>`, HTTP or HTTPS, no `/etc/hosts` editing; auto-starts in the background on `isola up`
+- **Environment injection**: `$PORT`, `$ISOLA_BRANCH`, `$ISOLA_BACKEND_URL`, `$DATABASE_URL`, etc. injected automatically so services (and databases) wire themselves up
+- **AI-agent friendly**: `isola ls --json` exposes every endpoint, and isola ships an installable [Agent Skill](#agent-skills) (`npx skills add cyucelen/isola`)
+- **TUI dashboard**: interactive terminal UI to start, stop, restart, and monitor every service across worktrees
+- **Zero dependencies**: a single Go binary that drives your existing toolchain and your existing Postgres; no Docker
+- **Per-worktree overrides**: customize commands, ports, and env vars per branch
 
 ---
 
@@ -28,25 +58,9 @@ isola extends that model toward **full per-worktree environment isolation**: dat
 
 ---
 
-## Features
-
-- **Multi-service** — Define frontend, backend, and any number of services per worktree
-- **Automatic port allocation** — Hash-based port assignment (FNV32) with per-service ranges; no port conflicts across worktrees
-- **Subdomain reverse proxy** — Access any worktree via `branch-name.localhost:<port>` (no `/etc/hosts` editing required)
-- **HTTPS proxy** — Auto-generated certificates or custom cert/key for local HTTPS (Secure Cookies, Service Workers, etc.)
-- **Environment variable injection** — `$PORT`, `$ISOLA_BRANCH`, `$ISOLA_BACKEND_URL`, etc. are injected automatically
-- **TUI dashboard** — Interactive terminal UI to start, stop, restart, and monitor all services
-- **Process lifecycle** — Graceful shutdown (SIGTERM → SIGKILL), log files, stale PID cleanup
-- **Per-worktree overrides** — Customize commands, ports, and env vars per branch
-- **AI agent friendly** — `isola ls --json` includes `url` and `direct_url` fields for automatic endpoint discovery
-
----
-
 ## Quick Start
 
 ### 1. Install
-
-![Install demo](./demo/demo-install.gif)
 
 ```bash
 # Homebrew
@@ -92,31 +106,33 @@ proxy_port = 8000
 NODE_ENV = "development"
 ```
 
+To give each worktree its own database, add an `[accessories.primary]` block
+(see [Configuration Reference](#accessoriesname)).
+
 ### 4. Start services
 
 ```bash
-isola up            # Start all services for the current worktree
-isola up --all      # Start all services for ALL worktrees
+isola up            # Start this worktree's services (and the proxy)
+isola up --all      # Start services for ALL worktrees
 ```
 
-### 5. Start the proxy
+`isola up` also **auto-starts the reverse proxy** in the background, so your
+services are immediately reachable at `*.localhost`. It keeps running until you
+`isola proxy stop`.
 
 ```bash
-isola proxy start
-# :3000 → frontend services
-# :8000 → backend services
+# Opt out of auto-start with [proxy] enabled = false, then run it yourself:
+isola proxy start            # foreground proxy
+isola proxy start --https    # HTTPS with auto-generated certificates
 
-# Or with HTTPS
-isola proxy start --https
-# Auto-generated certificates for local HTTPS
+# For auto-started HTTPS instead, set [proxy] https = true in .isola.toml.
 ```
 
-### 6. Open in browser
+### 5. Open in browser
 
-```bash
-isola open                    # Opens http://main.localhost:3000
-isola open --service backend  # Opens http://main.localhost:8000
-```
+Service URLs follow the pattern `http://<branch-slug>.localhost:<proxy_port>`
+(e.g. `http://main.localhost:3000`). Select a service in the TUI dashboard
+(`isola dash`) and press the open key to launch it in your default browser.
 
 ---
 
@@ -136,7 +152,6 @@ isola open --service backend  # Opens http://main.localhost:8000
 | `isola proxy start --https`| Start the reverse proxy with HTTPS (auto-generated certs) |
 | `isola proxy stop`         | Stop the reverse proxy                                |
 | `isola trust`              | Install the CA certificate into the system trust store|
-| `isola open`               | Open the current worktree in a browser                |
 | `isola doctor`             | Run diagnostic checks on config and ports             |
 | `isola version`            | Print version information                             |
 
@@ -168,7 +183,7 @@ proxy_port = 3000
 > [!IMPORTANT]
 > **Make your command bind the allocated `$PORT`.** isola injects the
 > allocated port as the `PORT` environment variable, but your service must
-> actually listen on it — otherwise it will start on its own default port and
+> actually listen on it; otherwise it will start on its own default port and
 > isola will report it as `running` on a port nothing is listening on.
 >
 > The reliable approach is to have your service read `$PORT` itself:
@@ -182,7 +197,7 @@ proxy_port = 3000
 >
 > **pnpm caveat:** `command = "pnpm run dev -- --port $PORT"` does **not** work.
 > pnpm inserts its own `--` separator, producing `vite ... -- --port 3193`, and
-> Vite treats everything after `--` as positional args — so `--port` is silently
+> Vite treats everything after `--` as positional args, so `--port` is silently
 > ignored and Vite falls back to `5173`. Use `npx vite --port $PORT`, or read
 > `PORT` inside `vite.config.ts` as shown above. (See
 > [#9](https://github.com/cyucelen/isola/issues/9).)
@@ -194,8 +209,59 @@ Global environment variables injected into all services.
 ```toml
 [env]
 NODE_ENV = "development"
-DATABASE_URL = "postgres://localhost/mydb"
+LOG_LEVEL = "debug"
 ```
+
+### `[accessories.<name>]`
+
+Give each worktree its own isolated stateful dependency (a database today).
+isola provisions it on `isola up` and drops it on `isola down --prune`. It
+connects to your existing Postgres (never manages the server itself) and clones
+a seeded template into a fresh database per worktree, injecting the connection
+string into your services.
+
+| Field        | Type   | Required | Description                                                                              |
+| ------------ | ------ | -------- | ---------------------------------------------------------------------------------------- |
+| `kind`       | string | yes      | Driver backing the accessory. `postgres` today (bare names are built-in)                 |
+| `server_url` | string | yes      | Existing server + maintenance database, used to create/drop. Must be a `postgres://` URL |
+| `clone_from` | string | yes      | Seeded template database copied for each worktree (kept quiescent, never run against)    |
+| `name`       | string | yes      | Per-worktree database name; supports `${VAR}` (e.g. `${ISOLA_BRANCH_SLUG}`)               |
+| `inject`     | string | yes      | Env var set on services holding the worktree's connection string (e.g. `DATABASE_URL`)   |
+| `url`        | string | no       | Override for the injected connection string; supports `${db}` (defaults to `server_url` with the database swapped) |
+
+```toml
+[accessories.primary]
+kind       = "postgres"
+server_url = "postgres://postgres@localhost:5432/postgres"
+clone_from = "myapp_dev"
+name       = "myapp_${ISOLA_BRANCH_SLUG}"
+inject     = "DATABASE_URL"
+```
+
+> [!NOTE]
+> The resolved `name` must be a legal Postgres identifier (≤ 63 bytes) and must
+> not equal `clone_from` or the `server_url` database, so isola never provisions
+> or resets a worktree on top of the template. Manage accessories out of band
+> with `isola accessory ls|provision|reset|drop [name]`.
+
+### `[proxy]`
+
+The reverse proxy auto-starts in the background on `isola up`. This block is
+optional; omit it to keep the defaults.
+
+| Field     | Type | Required | Description                                                              |
+| --------- | ---- | -------- | ------------------------------------------------------------------------ |
+| `enabled` | bool | no       | Auto-start the proxy on `isola up` (default `true`; set `false` to opt out) |
+| `https`   | bool | no       | Serve HTTPS with auto-generated certificates (default `false`)           |
+
+```toml
+[proxy]
+enabled = true
+https   = false
+```
+
+The proxy runs until `isola proxy stop`; it is not stopped by `isola down`. You
+can always run it manually with `isola proxy start` (foreground).
 
 ### `[worktrees."<branch>"]`
 
@@ -269,10 +335,10 @@ module.exports = {
   main.localhost:8000    feature-auth.localhost:8000
 ```
 
-1. **Port allocation** — Each service gets a port via `FNV32(branch:service) % range`. Stable across restarts.
-2. **Process management** — Services run as child processes with process groups. Logs go to `.isola/logs/`.
-3. **Reverse proxy** — One HTTP listener per `proxy_port`. Routes based on `Host` header subdomain.
-4. **`*.localhost`** — Per [RFC 6761](https://tools.ietf.org/html/rfc6761), modern browsers resolve `*.localhost` to `127.0.0.1` automatically.
+1. **Port allocation**: each service gets a port via `FNV32(branch:service) % range`. Stable across restarts.
+2. **Process management**: services run as child processes with process groups. Logs go to `.isola/logs/`.
+3. **Reverse proxy**: one HTTP listener per `proxy_port`. Routes based on `Host` header subdomain.
+4. **`*.localhost`**: per [RFC 6761](https://tools.ietf.org/html/rfc6761), modern browsers resolve `*.localhost` to `127.0.0.1` automatically.
 
 ---
 
@@ -289,8 +355,8 @@ Launch with `isola dash`:
 │  ──────────────────────────────────────────────────────────── │
 │ ▸ main           frontend   3100   ● running   12345          │
 │   main           backend    8100   ● running   12346          │
-│   feature/auth   frontend   3117   ○ stopped   —              │
-│   feature/auth   backend    8104   ○ stopped   —              │
+│   feature/auth   frontend   3117   ○ stopped   -              │
+│   feature/auth   backend    8104   ○ stopped   -              │
 │                                                               │
 │  Proxy: ● running (:3000, :8000)                              │
 │                                                               │
@@ -353,27 +419,21 @@ isola ls --json
 # [{"worktree":"main","service":"frontend","port":3100,"status":"running",
 #   "pid":12345,"url":"http://main.localhost:3000","direct_url":"http://localhost:3100"}, ...]
 
-# Start the proxy
-isola proxy start
-# Access:
-#   http://main.localhost:3000          → frontend (main)
-#   http://main.localhost:8000          → backend (main)
-#   http://feature-auth.localhost:3000  → frontend (feature/auth)
-#   http://feature-auth.localhost:8000  → backend (feature/auth)
+# The proxy was already auto-started by `isola up`, so services are reachable at:
+#   http://main.localhost:3000          -> frontend (main)
+#   http://main.localhost:8000          -> backend (main)
+#   http://feature-auth.localhost:3000  -> frontend (feature/auth)
+#   http://feature-auth.localhost:8000  -> backend (feature/auth)
 
-# Or start with HTTPS (for Secure Cookies, Service Workers, etc.)
+# For HTTPS (Secure Cookies, Service Workers, etc.), set [proxy] https = true,
+# or run the proxy manually:
 isola proxy start --https
-# Auto-generates certificates in .isola/certs/
-# Access via https://main.localhost:3000
+# Auto-generates certificates in .isola/certs/; access via https://main.localhost:3000
 
 # Trust the CA to remove browser warnings
 isola trust
 
-# Open in browser
-isola open
-# Opening http://main.localhost:3000 ...
-
-# Or use the TUI
+# Open a service in the browser from the TUI
 isola dash
 
 # When done
@@ -382,6 +442,28 @@ isola down --all
 ```
 
 ---
+
+## Agent Skills
+
+isola ships an [Agent Skill](https://github.com/vercel-labs/skills) that teaches
+AI coding agents (Claude Code, Cursor, Codex, opencode, …) how to drive it.
+Install it into any project with:
+
+```bash
+npx skills add cyucelen/isola
+```
+
+It's a single `isola` skill using progressive disclosure: a lean `SKILL.md`
+plus `references/` that agents load only when relevant:
+
+| Reference | Covers |
+| --------- | ------ |
+| `references/setup.md` | Create `.isola.toml`, define services, enable HTTPS/databases |
+| `references/dev.md` | Run services across git worktrees (`up`/`down`/`ls`/`dash`/`proxy`/`logs`) |
+| `references/databases.md` | Per-worktree Postgres isolation via `[accessories]` and `isola accessory …` |
+| `references/troubleshoot.md` | Diagnose failed starts, port/proxy/slug issues, database errors |
+
+The skill source lives in [`skills/isola/`](./skills/isola).
 
 ## Shell Completion
 
@@ -440,7 +522,7 @@ isola completion powershell > isola.ps1
 ### Proxy not routing correctly
 
 - Ensure the proxy is running with `isola proxy start`.
-- Verify your browser resolves `*.localhost` — modern browsers do this per RFC 6761.
+- Verify your browser resolves `*.localhost` (modern browsers do this per RFC 6761).
 - Check that the target service is actually running with `isola ls`.
 - The proxy routes based on the `Host` header subdomain, so access via `http://<branch-slug>.localhost:<proxy_port>`.
 
@@ -471,7 +553,7 @@ Modern browsers (Chrome, Firefox, Edge, Safari) resolve `*.localhost` to `127.0.
 
 ### What happens if two worktrees hash to the same port?
 
-isola uses linear probing — if the hash-derived port is already taken, it tries the next port in the range until it finds a free one.
+isola uses linear probing: if the hash-derived port is already taken, it tries the next port in the range until it finds a free one.
 
 ### Can I use isola without the proxy?
 
@@ -506,16 +588,21 @@ isola/
 │   ├── root.go                  # Root command + repo/config detection
 │   ├── init.go                  # isola init
 │   ├── up.go                    # isola up
-│   ├── down.go                  # isola down
+│   ├── down.go                  # isola down (+ --prune teardown)
 │   ├── ls.go                    # isola ls
 │   ├── dash.go                  # isola dash
 │   ├── proxy.go                 # isola proxy start|stop
 │   ├── trust.go                 # isola trust
-│   ├── open.go                  # isola open
+│   ├── logs.go                  # isola logs
+│   ├── accessory.go             # isola accessory ls|provision|reset|drop
 │   └── version.go               # isola version
 ├── internal/
 │   ├── cert/cert.go             # CA + server certificate auto-generation
 │   ├── config/config.go         # .isola.toml loading & validation
+│   ├── accessory/               # Per-worktree stateful dependencies
+│   │   ├── accessory.go         # Driver interface + registry
+│   │   └── postgres/postgres.go # Postgres database-per-worktree driver (pgx)
+│   ├── expand/expand.go         # Shared ${VAR} interpolation
 │   ├── git/
 │   │   ├── repo.go              # Repo root / common dir detection
 │   │   └── worktree.go          # Worktree listing & branch slugs
@@ -529,13 +616,14 @@ isola/
 │   ├── proxy/
 │   │   ├── resolver.go          # Slug + port → backend resolution
 │   │   └── server.go            # HTTP/HTTPS reverse proxy
-│   ├── browser/open.go          # OS-aware browser opening
+│   ├── browser/open.go          # OS-aware browser opening (used by the TUI)
 │   └── tui/                     # Bubble Tea TUI dashboard
 │       ├── app.go               # Top-level model
 │       ├── dashboard.go         # Table rendering
 │       ├── keys.go              # Key bindings
 │       ├── messages.go          # Custom messages
 │       └── styles.go            # Lip Gloss styles
+├── skills/isola/                # Agent Skill: SKILL.md + references/ (npx skills add cyucelen/isola)
 ├── Makefile
 ├── .goreleaser.yaml
 └── .github/workflows/
@@ -560,6 +648,14 @@ make test       # Run tests with race detector
 make lint       # Run golangci-lint
 make all        # fmt + vet + lint + test + build
 ```
+
+---
+
+## Credits & prior art
+
+isola is a fork of **[portree](https://github.com/fairy-pitta/portree)** by [fairy-pitta](https://github.com/fairy-pitta), and builds directly on its worktree-aware process management, hash-based port allocation, and `*.localhost` reverse proxy. Huge thanks to the portree authors for that foundation.
+
+**If you just need per-worktree dev servers** (port allocation and subdomain routing, without databases or other stateful isolation), [portree](https://github.com/fairy-pitta/portree) is the simpler, focused tool. isola extends that model toward **full per-worktree environment isolation**: databases and other stateful accessories, cloned from a template and torn down together with the worktree.
 
 ---
 

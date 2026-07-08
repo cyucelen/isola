@@ -1,7 +1,5 @@
 # Contributing to isola
 
-[日本語版はこちら](CONTRIBUTING.ja.md)
-
 Thank you for your interest in contributing to isola!
 
 ## Development Setup

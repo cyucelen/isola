@@ -7,11 +7,16 @@ This directory contains VHS tape files for generating demo GIFs for the README.
 - [VHS](https://github.com/charmbracelet/vhs) - Terminal recorder
 - Go (for building isola)
 - Python 3 (for mock servers)
+- Docker (for the throwaway Postgres that backs the per-worktree database demo)
 
 ```bash
 # Install VHS
 brew install vhs
 ```
+
+`setup-demo-env.sh` starts a disposable Postgres container (`isola-demo-pg`) and
+seeds a `myapp_dev` template database; the demos clone it per worktree. `make
+clean` removes the container.
 
 ## Quick Start
 

@@ -1,7 +1,5 @@
 # Architecture
 
-[日本語版はこちら](./ja/architecture.md)
-
 ## Overview
 
 isola is a Git Worktree Server Manager that enables running multiple development servers across git worktrees with automatic port allocation and subdomain-based routing.

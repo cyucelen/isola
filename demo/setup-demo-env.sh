@@ -5,10 +5,10 @@
 set -e
 
 DEMO_DIR="${1:-/tmp/isola-demo}"
-PORTREE_BIN="${2:-$(pwd)/isola}"
+ISOLA_BIN="${2:-$(pwd)/isola}"
 
 echo "Setting up demo environment in: $DEMO_DIR"
-echo "Using isola binary: $PORTREE_BIN"
+echo "Using isola binary: $ISOLA_BIN"
 
 # Clean up existing demo directory
 rm -rf "$DEMO_DIR"
@@ -82,6 +82,24 @@ with socketserver.TCPServer(("", PORT), Handler) as httpd:
     httpd.serve_forever()
 EOF
 
+# Start a throwaway Postgres so the demo can show per-worktree database
+# isolation. It is seeded with a template database (myapp_dev) that isola
+# clones for each worktree.
+echo "Starting demo Postgres (Docker)..."
+docker rm -f isola-demo-pg >/dev/null 2>&1 || true
+docker run -d --name isola-demo-pg \
+	-e POSTGRES_USER=isola -e POSTGRES_PASSWORD=isola -e POSTGRES_DB=isola \
+	-p 55432:5432 postgres:16 >/dev/null
+for i in $(seq 1 30); do
+	docker exec isola-demo-pg pg_isready -U isola >/dev/null 2>&1 && break
+	sleep 1
+done
+docker exec -e PGPASSWORD=isola isola-demo-pg psql -U isola -d isola -v ON_ERROR_STOP=1 \
+	-c "CREATE DATABASE myapp_dev" >/dev/null
+docker exec -e PGPASSWORD=isola isola-demo-pg psql -U isola -d myapp_dev -v ON_ERROR_STOP=1 \
+	-c "CREATE TABLE todos (id serial primary key, title text); INSERT INTO todos (title) VALUES ('write docs'), ('ship isola'), ('demo accessories')" >/dev/null
+echo "Seeded template database: myapp_dev"
+
 # Create .isola.toml configuration
 cat > .isola.toml << 'EOF'
 # isola configuration for demo project
@@ -100,6 +118,15 @@ proxy_port = 8000
 
 [env]
 DEMO_MODE = "true"
+
+# Per-worktree database: each worktree gets its own copy of the myapp_dev
+# template, injected into services as DATABASE_URL.
+[accessories.primary]
+kind       = "postgres"
+server_url = "postgres://isola:isola@localhost:55432/isola"
+clone_from = "myapp_dev"
+name       = "myapp_${ISOLA_BRANCH_SLUG}"
+inject     = "DATABASE_URL"
 EOF
 
 # Initial commit
@@ -110,14 +137,14 @@ git commit -m "Initial commit: demo project setup"
 git branch feature/new-api
 
 # Add isola to PATH for this session
-export PATH="$(dirname "$PORTREE_BIN"):$PATH"
+export PATH="$(dirname "$ISOLA_BIN"):$PATH"
 
 echo ""
 echo "✅ Demo environment ready!"
 echo ""
 echo "To record demos:"
 echo "  cd $DEMO_DIR"
-echo "  export PATH=\"$(dirname "$PORTREE_BIN"):\$PATH\""
+echo "  export PATH=\"$(dirname "$ISOLA_BIN"):\$PATH\""
 echo ""
 echo "Then run VHS:"
 echo "  vhs /path/to/demo-quickstart.tape"

@@ -15,14 +15,23 @@ Set Padding 20
 Set Framerate 30
 Set PlaybackSpeed 0.75
 
-# Setup: Create worktree and start services
+# Setup: create a second worktree and start each worktree's services
 Hide
 Type "git worktree add ../demo-feature feature/new-api 2>/dev/null || true"
 Enter
 Sleep 500ms
-Type "isola up --all"
+Type "isola up"
 Enter
 Sleep 2s
+Type "cd ../demo-feature"
+Enter
+Sleep 300ms
+Type "isola up"
+Enter
+Sleep 2s
+Type "cd ../isola-demo"
+Enter
+Sleep 300ms
 Show
 
 # Launch dashboard
@@ -56,10 +65,6 @@ Sleep 1.5s
 Type "r"
 Sleep 1.5s
 
-# Open in browser
-Type "o"
-Sleep 1.5s
-
 # Stop all
 Type "X"
 Sleep 1.5s
@@ -74,10 +79,17 @@ Sleep 1s
 
 # Cleanup
 Hide
-Type "isola down --all"
+Type "isola down"
 Enter
 Sleep 500ms
-Type "git worktree remove ../demo-feature 2>/dev/null || true"
+Type "cd ../demo-feature"
+Enter
+Type "isola down"
+Enter
+Sleep 500ms
+Type "cd ../isola-demo"
+Enter
+Type "git worktree remove ../demo-feature --force 2>/dev/null || true"
 Enter
 Show
 Sleep 500ms

@@ -1,5 +1,5 @@
-# Binary
-isola
+# Binary (repo-root only; anchored so it doesn't match skills/isola/ etc.)
+/isola
 dist/
 
 # State (runtime)

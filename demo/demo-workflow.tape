@@ -1,5 +1,6 @@
-# isola Multi-Worktree Workflow Demo
-# This demo shows working with multiple worktrees simultaneously
+# isola Worktree Isolation Demo
+# Spin up an isolated environment for a worktree: its own services (ports +
+# *.localhost URLs) and its own database, cloned from a template.
 
 Output demo-workflow.gif
 
@@ -15,53 +16,30 @@ Set Padding 20
 Set Framerate 30
 Set PlaybackSpeed 0.75
 
-# Create a new worktree
+# Create a worktree for a branch and enter it
 Type "git worktree add ../demo-feature feature/new-api"
 Enter
-Sleep 1.5s
-
-# List worktrees
-Type "git worktree list"
-Enter
 Sleep 2s
-
-# Start services on ALL worktrees
-Type "isola up --all"
+Type "cd ../demo-feature"
 Enter
-Sleep 2.5s
+Sleep 700ms
 
-# Check status - each worktree gets unique ports
+# Bring up its environment — services get ports, and a database is cloned
+Type "isola up"
+Enter
+Sleep 3s
+
+# Ports, status, and *.localhost URLs
 Type "isola ls"
 Enter
 Sleep 3s
 
-# Show accessible URLs for both worktrees
-Type "echo ''"
+# This worktree's own database, cloned from the myapp_dev template
+Type "isola accessory ls"
 Enter
-Type "echo 'Access URLs:'"
-Enter
-Sleep 300ms
-Type "echo '  main branch:'"
-Enter
-Type "echo '    http://main.localhost:3000         → frontend'"
-Enter
-Type "echo '    http://main.localhost:8000         → backend'"
-Enter
-Sleep 500ms
-Type "echo '  feature/new-api branch:'"
-Enter
-Type "echo '    http://feature-new-api.localhost:3000  → frontend'"
-Enter
-Type "echo '    http://feature-new-api.localhost:8000  → backend'"
-Enter
-Sleep 2.5s
+Sleep 3.5s
 
-# Stop all
-Type "isola down --all"
-Enter
-Sleep 2s
-
-# Clean up worktree
-Type "git worktree remove ../demo-feature"
+# Tear down
+Type "isola down"
 Enter
 Sleep 1.5s

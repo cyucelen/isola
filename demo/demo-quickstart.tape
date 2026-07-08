@@ -24,28 +24,15 @@ Type "isola up"
 Enter
 Sleep 2.5s
 
-# Check status
+# Check status — ports, status, and *.localhost URLs
 Type "isola ls"
 Enter
-Sleep 2.5s
+Sleep 3.5s
 
-# Show accessible URLs
-Type "echo ''"
+# The worktree's own database, cloned from the template
+Type "isola accessory ls"
 Enter
-Type "echo 'Access URLs:'"
-Enter
-Sleep 300ms
-Type "echo '  http://main.localhost:3000  → frontend'"
-Enter
-Sleep 300ms
-Type "echo '  http://main.localhost:8000  → backend'"
-Enter
-Sleep 2s
-
-# Open in browser
-Type "isola open"
-Enter
-Sleep 2s
+Sleep 3.5s
 
 # Stop services
 Type "isola down"

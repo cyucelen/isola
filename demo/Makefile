@@ -2,12 +2,12 @@
 
 DEMO_DIR ?= /tmp/isola-demo
 INIT_DIR ?= /tmp/isola-init-demo
-PORTREE_BIN ?= $(shell pwd)/../isola
+ISOLA_BIN ?= $(shell pwd)/../isola
 OUTPUT_DIR ?= $(shell pwd)
 
-.PHONY: all setup quickstart tui workflow install init clean
+.PHONY: all setup quickstart tui workflow init clean
 
-all: install init quickstart tui workflow
+all: init quickstart tui workflow
 
 # Build isola if not exists
 ../isola:
@@ -17,7 +17,7 @@ all: install init quickstart tui workflow
 setup: ../isola
 	@echo "Setting up demo environment..."
 	@chmod +x setup-demo-env.sh
-	@./setup-demo-env.sh "$(DEMO_DIR)" "$(PORTREE_BIN)"
+	@./setup-demo-env.sh "$(DEMO_DIR)" "$(ISOLA_BIN)"
 
 # Setup clean environment for init demo (no .isola.toml)
 setup-init: ../isola
@@ -26,19 +26,11 @@ setup-init: ../isola
 	@mkdir -p "$(INIT_DIR)"
 	@cd "$(INIT_DIR)" && git init
 
-# Generate install demo GIF (no setup needed, just shows commands)
-install: ../isola
-	@echo "Generating install demo..."
-	@cd "$(DEMO_DIR)" 2>/dev/null || mkdir -p "$(DEMO_DIR)" && cd "$(DEMO_DIR)" && \
-		PATH="$(dir $(PORTREE_BIN)):$$PATH" \
-		vhs "$(OUTPUT_DIR)/demo-install.tape" -o "$(OUTPUT_DIR)/demo-install.gif"
-	@echo "✅ Created: $(OUTPUT_DIR)/demo-install.gif"
-
 # Generate init demo GIF
 init: setup-init
 	@echo "Generating init demo..."
 	@cd "$(INIT_DIR)" && \
-		PATH="$(dir $(PORTREE_BIN)):$$PATH" \
+		PATH="$(dir $(ISOLA_BIN)):$$PATH" \
 		vhs "$(OUTPUT_DIR)/demo-init.tape" -o "$(OUTPUT_DIR)/demo-init.gif"
 	@echo "✅ Created: $(OUTPUT_DIR)/demo-init.gif"
 
@@ -46,7 +38,7 @@ init: setup-init
 quickstart: setup
 	@echo "Generating quickstart demo..."
 	@cd "$(DEMO_DIR)" && \
-		PATH="$(dir $(PORTREE_BIN)):$$PATH" \
+		PATH="$(dir $(ISOLA_BIN)):$$PATH" \
 		vhs "$(OUTPUT_DIR)/demo-quickstart.tape" -o "$(OUTPUT_DIR)/demo-quickstart.gif"
 	@echo "✅ Created: $(OUTPUT_DIR)/demo-quickstart.gif"
 
@@ -54,7 +46,7 @@ quickstart: setup
 tui: setup
 	@echo "Generating TUI dashboard demo..."
 	@cd "$(DEMO_DIR)" && \
-		PATH="$(dir $(PORTREE_BIN)):$$PATH" \
+		PATH="$(dir $(ISOLA_BIN)):$$PATH" \
 		vhs "$(OUTPUT_DIR)/demo-tui.tape" -o "$(OUTPUT_DIR)/demo-tui.gif"
 	@echo "✅ Created: $(OUTPUT_DIR)/demo-tui.gif"
 
@@ -62,21 +54,21 @@ tui: setup
 workflow: setup
 	@echo "Generating workflow demo..."
 	@cd "$(DEMO_DIR)" && \
-		PATH="$(dir $(PORTREE_BIN)):$$PATH" \
+		PATH="$(dir $(ISOLA_BIN)):$$PATH" \
 		vhs "$(OUTPUT_DIR)/demo-workflow.tape" -o "$(OUTPUT_DIR)/demo-workflow.gif"
 	@echo "✅ Created: $(OUTPUT_DIR)/demo-workflow.gif"
 
-# Clean up
+# Clean up (also removes the demo Postgres container)
 clean:
 	rm -rf "$(DEMO_DIR)"
 	rm -rf "$(INIT_DIR)"
+	-docker rm -f isola-demo-pg 2>/dev/null
 	rm -f *.gif
 
 # Help
 help:
 	@echo "Usage:"
 	@echo "  make all        - Generate all demo GIFs"
-	@echo "  make install    - Generate install demo only"
 	@echo "  make init       - Generate init/config demo only"
 	@echo "  make quickstart - Generate quickstart demo only"
 	@echo "  make tui        - Generate TUI demo only"
