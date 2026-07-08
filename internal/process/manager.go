@@ -1,12 +1,14 @@
 package process
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 
+	"github.com/cyucelen/isola/internal/accessory"
 	"github.com/cyucelen/isola/internal/config"
 	"github.com/cyucelen/isola/internal/git"
 	"github.com/cyucelen/isola/internal/logging"
@@ -21,16 +23,35 @@ type Manager struct {
 	registry *port.Registry
 	mu       sync.RWMutex
 	runners  map[string]*Runner // key: "branch:service"
+	// accessoryEnv caches the injected env of a branch's accessories once they
+	// have been successfully provisioned in this Manager's lifetime, so repeated
+	// StartServices calls (e.g. per-service restarts from the TUI) don't
+	// re-provision — a CLI `up` gets one Manager per run, the TUI one per session.
+	accessoryEnv map[string]map[string]string // branch -> injected env
 }
 
 // NewManager creates a new process Manager.
 func NewManager(cfg *config.Config, store *state.FileStore, registry *port.Registry) *Manager {
 	return &Manager{
-		cfg:      cfg,
-		store:    store,
-		registry: registry,
-		runners:  map[string]*Runner{},
+		cfg:          cfg,
+		store:        store,
+		registry:     registry,
+		runners:      map[string]*Runner{},
+		accessoryEnv: map[string]map[string]string{},
 	}
+}
+
+func (m *Manager) cachedAccessoryEnv(branch string) (map[string]string, bool) {
+	m.mu.RLock()
+	env, ok := m.accessoryEnv[branch]
+	m.mu.RUnlock()
+	return env, ok
+}
+
+func (m *Manager) cacheAccessoryEnv(branch string, env map[string]string) {
+	m.mu.Lock()
+	m.accessoryEnv[branch] = env
+	m.mu.Unlock()
 }
 
 func (m *Manager) setRunner(key string, r *Runner) {
@@ -104,6 +125,15 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 
 	slug := tree.Slug()
 
+	// Provision per-worktree accessories (databases, ...) and collect the env
+	// vars they inject. If any accessory fails, do not start services against a
+	// half-provisioned environment.
+	accEnv, accResults, accOK := m.provisionAccessories(tree)
+	results = append(results, accResults...)
+	if !accOK {
+		return results
+	}
+
 	for _, svcName := range services {
 		p, ok := portMap[svcName]
 		if !ok {
@@ -150,6 +180,7 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 			Dir:                  dir,
 			Port:                 p,
 			Env:                  env,
+			InjectedEnv:          accEnv,
 			LogDir:               filepath.Join(m.store.Dir(), "logs"),
 			AllServicePorts:      portMap,
 			AllServiceProxyPorts: proxyPorts,
@@ -180,6 +211,65 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 	}
 
 	return results
+}
+
+// provisionAccessories provisions every configured accessory for the worktree,
+// recording each in state and returning the env vars to inject into services.
+// The bool is false if any accessory failed (in which case callers should not
+// start services). Successes are logged; failures are returned as error
+// ServiceResults. With no accessories configured it is a no-op. Once a branch's
+// accessories provision successfully the result is cached for this Manager's
+// lifetime, so later calls return it without touching the server.
+func (m *Manager) provisionAccessories(tree *git.Worktree) (map[string]string, []ServiceResult, bool) {
+	if env, ok := m.cachedAccessoryEnv(tree.Branch); ok {
+		return env, nil, true
+	}
+
+	env := map[string]string{}
+
+	accs, err := accessory.BuildAll(m.cfg)
+	if err != nil {
+		return env, []ServiceResult{{Branch: tree.Branch, Service: "accessories", Err: err}}, false
+	}
+	if len(accs) == 0 {
+		m.cacheAccessoryEnv(tree.Branch, env)
+		return env, nil, true
+	}
+
+	names := make([]string, 0, len(accs))
+	for name := range accs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	wt := accessory.FromWorktree(tree)
+
+	var results []ServiceResult
+	ok := true
+	for _, name := range names {
+		a := accs[name]
+		ctx, cancel := context.WithTimeout(context.Background(), accessory.OpTimeout)
+		prov, err := a.Provision(ctx, wt)
+		cancel()
+		if err != nil {
+			results = append(results, ServiceResult{
+				Branch: tree.Branch, Service: "accessory:" + name, Err: err,
+			})
+			ok = false
+			continue
+		}
+		for k, v := range prov.Env {
+			env[k] = v
+		}
+		if err := m.store.RecordAccessory(tree.Branch, name, a.Kind(), prov.Handle); err != nil {
+			logging.Warn("failed to record accessory state %s/%s: %v", tree.Branch, name, err)
+		}
+		logging.Info("Provisioning %s (%s) for %s ...", name, a.Kind(), tree.Branch)
+	}
+	if ok {
+		m.cacheAccessoryEnv(tree.Branch, env)
+	}
+	return env, results, ok
 }
 
 // StopServices stops services for the given worktree.

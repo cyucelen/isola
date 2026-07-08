@@ -502,3 +502,33 @@ func TestIsPortAvailable(t *testing.T) {
 		}
 	})
 }
+
+func TestBuildEnvInjectedVerbatim(t *testing.T) {
+	runner := &Runner{
+		config: RunnerConfig{
+			ServiceName: "web",
+			Branch:      "feature/auth",
+			BranchSlug:  "feature-auth",
+			Command:     "npm start",
+			Port:        3150,
+			// Config env is subject to ${VAR} expansion...
+			Env: map[string]string{"DATABASE_URL": "should-be-overridden"},
+			// ...but injected accessory vars are passed through verbatim and win.
+			InjectedEnv: map[string]string{
+				"DATABASE_URL": "postgres://u:p${x}@host:5432/db",
+			},
+		},
+	}
+
+	env := runner.buildEnv()
+	// Last write wins in exec.Cmd.Env; the injected value is appended last.
+	var got string
+	for _, e := range env {
+		if strings.HasPrefix(e, "DATABASE_URL=") {
+			got = strings.TrimPrefix(e, "DATABASE_URL=")
+		}
+	}
+	if got != "postgres://u:p${x}@host:5432/db" {
+		t.Errorf("injected DATABASE_URL = %q; want verbatim value winning over config env", got)
+	}
+}

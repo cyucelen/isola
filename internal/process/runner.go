@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cyucelen/isola/internal/expand"
 	"github.com/cyucelen/isola/internal/logging"
 )
 
@@ -23,8 +24,11 @@ type RunnerConfig struct {
 	Command     string
 	Dir         string // absolute working directory
 	Port        int
-	Env         map[string]string // merged environment variables
-	LogDir      string            // directory for log files
+	Env         map[string]string // merged environment variables (subject to ${VAR} expansion)
+	// InjectedEnv holds already-resolved vars (e.g. accessory DATABASE_URL) that
+	// must be passed through verbatim, without ${VAR} expansion, and win over Env.
+	InjectedEnv map[string]string
+	LogDir      string // directory for log files
 	// AllServicePorts maps service name -> assigned port for cross-service env vars.
 	AllServicePorts map[string]int
 	// AllServiceProxyPorts maps service name -> proxy port for URL env vars.
@@ -219,7 +223,7 @@ func (r *Runner) buildEnv() []string {
 		scheme = "http"
 	}
 	injected := map[string]string{
-		"PORT":           fmt.Sprintf("%d", r.config.Port),
+		"PORT":              fmt.Sprintf("%d", r.config.Port),
 		"ISOLA_BRANCH":      r.config.Branch,
 		"ISOLA_BRANCH_SLUG": r.config.BranchSlug,
 		"ISOLA_SERVICE":     r.config.ServiceName,
@@ -236,7 +240,7 @@ func (r *Runner) buildEnv() []string {
 	// resolve. Only the explicit ${...} form is interpolated; a bare "$" is
 	// left literal so existing values such as passwords ("p$ssw0rd") survive
 	// byte-for-byte.
-	expand := func(name string) string {
+	expandVar := func(name string) string {
 		if v, ok := injected[name]; ok {
 			return v
 		}
@@ -249,7 +253,7 @@ func (r *Runner) buildEnv() []string {
 			logging.Warn("skipping env var %q: contains null byte", k)
 			continue
 		}
-		env = append(env, k+"="+expandBraces(v, expand))
+		env = append(env, k+"="+expand.Braces(v, expandVar))
 	}
 
 	// Add isola auto-injected vars last so built-ins remain authoritative.
@@ -266,30 +270,16 @@ func (r *Runner) buildEnv() []string {
 		env = append(env, fmt.Sprintf("ISOLA_%s_URL=%s://%s.localhost:%d", strings.ToUpper(svcName), scheme, r.config.BranchSlug, proxyPort))
 	}
 
-	return env
-}
-
-// expandBraces expands ${VAR} references in s using mapping, leaving bare "$"
-// characters untouched. Unlike os.Expand, the bare "$VAR" form is NOT
-// interpreted, so existing config values containing a literal "$" (e.g.
-// passwords like "p$ssw0rd") are preserved exactly. A malformed reference with
-// no closing brace is left as-is.
-func expandBraces(s string, mapping func(string) string) string {
-	if !strings.Contains(s, "${") {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for i := 0; i < len(s); {
-		if s[i] == '$' && i+1 < len(s) && s[i+1] == '{' {
-			if end := strings.IndexByte(s[i+2:], '}'); end >= 0 {
-				b.WriteString(mapping(s[i+2 : i+2+end]))
-				i += 2 + end + 1
-				continue
-			}
+	// Injected accessory vars are already fully resolved by their driver, so add
+	// them last and verbatim — no ${VAR} expansion — so a value containing a
+	// literal "${...}" (e.g. in a password) survives byte-for-byte.
+	for k, v := range r.config.InjectedEnv {
+		if strings.ContainsRune(k, 0) || strings.ContainsRune(v, 0) {
+			logging.Warn("skipping injected env var %q: contains null byte", k)
+			continue
 		}
-		b.WriteByte(s[i])
-		i++
+		env = append(env, k+"="+v)
 	}
-	return b.String()
+
+	return env
 }

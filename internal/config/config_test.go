@@ -404,3 +404,81 @@ func TestInitThenLoad(t *testing.T) {
 		t.Error("loaded config has no services")
 	}
 }
+
+func TestLoadAccessories(t *testing.T) {
+	dir := t.TempDir()
+	tomlContent := `
+[services.web]
+command = "npm start"
+port_range = { min = 3100, max = 3199 }
+proxy_port = 3000
+
+[accessories.primary]
+kind = "postgres"
+server_url = "postgres://isola@localhost:5432/postgres"
+clone_from = "myapp_dev"
+name = "myapp_${ISOLA_BRANCH_SLUG}"
+inject = "DATABASE_URL"
+
+[accessories.cache]
+kind = "redis"
+`
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(tomlContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if len(cfg.Accessories) != 2 {
+		t.Fatalf("got %d accessories, want 2", len(cfg.Accessories))
+	}
+
+	// AccessoryKind reads the discriminator without decoding driver fields.
+	kind, err := cfg.AccessoryKind(cfg.Accessories["primary"])
+	if err != nil {
+		t.Fatalf("AccessoryKind error: %v", err)
+	}
+	if kind != "postgres" {
+		t.Errorf("primary kind = %q, want postgres", kind)
+	}
+
+	// The same primitive can then be decoded again into a driver-owned struct,
+	// which is the deferred-decode contract accessory drivers rely on.
+	var fields struct {
+		ServerURL string `toml:"server_url"`
+		CloneFrom string `toml:"clone_from"`
+		Name      string `toml:"name"`
+		Inject    string `toml:"inject"`
+	}
+	if err := cfg.Meta.PrimitiveDecode(cfg.Accessories["primary"], &fields); err != nil {
+		t.Fatalf("second PrimitiveDecode error: %v", err)
+	}
+	if fields.CloneFrom != "myapp_dev" || fields.Inject != "DATABASE_URL" {
+		t.Errorf("decoded fields = %+v", fields)
+	}
+	if fields.Name != "myapp_${ISOLA_BRANCH_SLUG}" {
+		t.Errorf("name = %q, want literal ${...} preserved", fields.Name)
+	}
+}
+
+func TestLoadAccessoryMissingKind(t *testing.T) {
+	dir := t.TempDir()
+	tomlContent := `
+[services.web]
+command = "npm start"
+port_range = { min = 3100, max = 3199 }
+proxy_port = 3000
+
+[accessories.primary]
+server_url = "postgres://isola@localhost:5432/postgres"
+`
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(tomlContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(dir)
+	if err == nil || !strings.Contains(err.Error(), "kind must not be empty") {
+		t.Fatalf("Load() error = %v, want 'kind must not be empty'", err)
+	}
+}

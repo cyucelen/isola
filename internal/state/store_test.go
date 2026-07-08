@@ -438,3 +438,54 @@ func TestWithLockConcurrent(t *testing.T) {
 		t.Errorf("after %d increments, port = %d", n, port)
 	}
 }
+
+func TestAccessoryStateHelpers(t *testing.T) {
+	st := emptyState()
+
+	if got := GetAccessoryState(st, "main", "primary"); got != nil {
+		t.Errorf("expected nil for absent accessory, got %+v", got)
+	}
+
+	SetAccessoryState(st, "main", "primary", RunningAccessoryState("postgres", map[string]string{"database": "myapp_main"}))
+	got := GetAccessoryState(st, "main", "primary")
+	if got == nil {
+		t.Fatal("expected accessory state after Set")
+	}
+	if got.Kind != "postgres" || got.Handle["database"] != "myapp_main" {
+		t.Errorf("got %+v, want kind=postgres handle[database]=myapp_main", got)
+	}
+	if got.CreatedAt == "" {
+		t.Error("CreatedAt should be set")
+	}
+
+	SetAccessoryState(st, "main", "cache", RunningAccessoryState("redis", map[string]string{"db": "1"}))
+	branch := BranchAccessories(st, "main")
+	if len(branch) != 2 {
+		t.Errorf("BranchAccessories = %d entries, want 2", len(branch))
+	}
+	if BranchAccessories(st, "other") != nil {
+		t.Error("BranchAccessories for unknown branch should be nil")
+	}
+}
+
+func TestAccessoryStateRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewFileStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _ := store.Load()
+	SetAccessoryState(st, "feature/auth", "primary", RunningAccessoryState("postgres", map[string]string{"database": "myapp_feature-auth"}))
+	if err := store.Save(st); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := GetAccessoryState(reloaded, "feature/auth", "primary")
+	if got == nil || got.Handle["database"] != "myapp_feature-auth" {
+		t.Errorf("round-trip lost accessory state: %+v", got)
+	}
+}

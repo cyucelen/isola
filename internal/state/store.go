@@ -35,6 +35,15 @@ type ProxyState struct {
 	HTTPS  bool   `json:"https,omitempty"`
 }
 
+// AccessoryState records a per-worktree resource isola provisioned (e.g. a
+// database), so teardown knows exactly what it created and may drop. Handle is
+// the driver's opaque record (e.g. {"database": "myapp_x"}) passed back to Drop.
+type AccessoryState struct {
+	Kind      string            `json:"kind"`   // driver kind, e.g. "postgres"
+	Handle    map[string]string `json:"handle"` // driver-defined teardown record
+	CreatedAt string            `json:"created_at"`
+}
+
 // State represents the full persisted state.
 type State struct {
 	// Services maps branch -> service name -> ServiceState.
@@ -42,6 +51,8 @@ type State struct {
 	Proxy    ProxyState                          `json:"proxy"`
 	// PortAssignments maps "branch:service" -> port.
 	PortAssignments map[string]int `json:"port_assignments"`
+	// Accessories maps branch -> accessory name -> AccessoryState.
+	Accessories map[string]map[string]*AccessoryState `json:"accessories,omitempty"`
 }
 
 // FileStore manages reading and writing state to a JSON file with file locking.
@@ -83,6 +94,9 @@ func (s *FileStore) Load() (*State, error) {
 	}
 	if st.PortAssignments == nil {
 		st.PortAssignments = map[string]int{}
+	}
+	if st.Accessories == nil {
+		st.Accessories = map[string]map[string]*AccessoryState{}
 	}
 	return &st, nil
 }
@@ -172,5 +186,70 @@ func emptyState() *State {
 	return &State{
 		Services:        map[string]map[string]*ServiceState{},
 		PortAssignments: map[string]int{},
+		Accessories:     map[string]map[string]*AccessoryState{},
 	}
+}
+
+// SetAccessoryState records the resource provisioned for a branch+accessory.
+func SetAccessoryState(st *State, branch, accessory string, as *AccessoryState) {
+	if st.Accessories == nil {
+		st.Accessories = map[string]map[string]*AccessoryState{}
+	}
+	if st.Accessories[branch] == nil {
+		st.Accessories[branch] = map[string]*AccessoryState{}
+	}
+	st.Accessories[branch][accessory] = as
+}
+
+// GetAccessoryState returns the recorded state for a branch+accessory, or nil.
+func GetAccessoryState(st *State, branch, accessory string) *AccessoryState {
+	if m, ok := st.Accessories[branch]; ok {
+		return m[accessory]
+	}
+	return nil
+}
+
+// BranchAccessories returns the accessory records for a branch (nil if none).
+func BranchAccessories(st *State, branch string) map[string]*AccessoryState {
+	return st.Accessories[branch]
+}
+
+// RunningAccessoryState creates an AccessoryState for a freshly provisioned resource.
+func RunningAccessoryState(kind string, handle map[string]string) *AccessoryState {
+	return &AccessoryState{
+		Kind:      kind,
+		Handle:    handle,
+		CreatedAt: time.Now().Format(time.RFC3339),
+	}
+}
+
+// RecordAccessory persists the resource provisioned for a branch+accessory under
+// the store lock.
+func (s *FileStore) RecordAccessory(branch, accessory, kind string, handle map[string]string) error {
+	return s.WithLock(func() error {
+		st, err := s.Load()
+		if err != nil {
+			return err
+		}
+		SetAccessoryState(st, branch, accessory, RunningAccessoryState(kind, handle))
+		return s.Save(st)
+	})
+}
+
+// ForgetAccessory removes the recorded state for a branch+accessory under the
+// store lock, pruning the branch entry when it becomes empty.
+func (s *FileStore) ForgetAccessory(branch, accessory string) error {
+	return s.WithLock(func() error {
+		st, err := s.Load()
+		if err != nil {
+			return err
+		}
+		if st.Accessories[branch] != nil {
+			delete(st.Accessories[branch], accessory)
+			if len(st.Accessories[branch]) == 0 {
+				delete(st.Accessories, branch)
+			}
+		}
+		return s.Save(st)
+	})
 }

@@ -8,6 +8,9 @@ import (
 	"github.com/cyucelen/isola/internal/git"
 	"github.com/cyucelen/isola/internal/logging"
 	"github.com/spf13/cobra"
+
+	// Register built-in accessory drivers.
+	_ "github.com/cyucelen/isola/internal/accessory/postgres"
 )
 
 var (

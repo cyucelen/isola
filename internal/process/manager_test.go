@@ -1,14 +1,161 @@
 package process
 
 import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/cyucelen/isola/internal/accessory"
 	"github.com/cyucelen/isola/internal/config"
 	"github.com/cyucelen/isola/internal/git"
 	"github.com/cyucelen/isola/internal/port"
 	"github.com/cyucelen/isola/internal/state"
 )
+
+// A fake accessory driver ("faketest") to exercise manager provisioning without
+// a real server. `fail = true` makes Provision error.
+func init() {
+	accessory.Register("faketest", func(name string, dec accessory.Decoder) (accessory.Accessory, error) {
+		var c struct {
+			Fail   bool   `toml:"fail"`
+			Inject string `toml:"inject"`
+		}
+		if err := dec(&c); err != nil {
+			return nil, err
+		}
+		inject := c.Inject
+		if inject == "" {
+			inject = "DATABASE_URL"
+		}
+		return &fakeAccessory{name: name, fail: c.Fail, inject: inject}, nil
+	})
+}
+
+type fakeAccessory struct {
+	name   string
+	inject string
+	fail   bool
+}
+
+func (f *fakeAccessory) Name() string { return f.name }
+func (f *fakeAccessory) Kind() string { return "faketest" }
+func (f *fakeAccessory) Provision(_ context.Context, wt accessory.WorktreeInfo) (accessory.Provisioned, error) {
+	if f.fail {
+		return accessory.Provisioned{}, errors.New("provision boom")
+	}
+	return accessory.Provisioned{
+		Handle: map[string]string{"id": "res-" + wt.Slug},
+		Env:    map[string]string{f.inject: "fake://" + wt.Slug},
+	}, nil
+}
+func (f *fakeAccessory) Reset(ctx context.Context, wt accessory.WorktreeInfo) (accessory.Provisioned, error) {
+	return f.Provision(ctx, wt)
+}
+func (f *fakeAccessory) Drop(context.Context, map[string]string) error { return nil }
+
+// managerWithConfig writes a .isola.toml, loads it, and returns a manager.
+func managerWithConfig(t *testing.T, toml string) (*Manager, *state.FileStore) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, config.FileName), []byte(toml), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	store, err := state.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return NewManager(cfg, store, port.NewRegistry(store, cfg)), store
+}
+
+func TestProvisionAccessories(t *testing.T) {
+	mgr, store := managerWithConfig(t, `
+[services.web]
+command = "sleep 60"
+port_range = { min = 19100, max = 19199 }
+proxy_port = 3000
+
+[accessories.db]
+kind = "faketest"
+inject = "DATABASE_URL"
+`)
+	tree := &git.Worktree{Path: t.TempDir(), Branch: "feature/auth"}
+
+	env, results, ok := mgr.provisionAccessories(tree)
+	if !ok {
+		t.Fatalf("expected ok, got results %+v", results)
+	}
+	if env["DATABASE_URL"] != "fake://feature-auth" {
+		t.Errorf("injected env = %v", env)
+	}
+
+	// The provisioned resource must be recorded in state.
+	st, _ := store.Load()
+	rec := state.GetAccessoryState(st, "feature/auth", "db")
+	if rec == nil || rec.Handle["id"] != "res-feature-auth" || rec.Kind != "faketest" {
+		t.Errorf("state record = %+v", rec)
+	}
+}
+
+func TestProvisionAccessoriesNoneConfigured(t *testing.T) {
+	mgr, _ := managerWithConfig(t, `
+[services.web]
+command = "sleep 60"
+port_range = { min = 19100, max = 19199 }
+proxy_port = 3000
+`)
+	env, results, ok := mgr.provisionAccessories(&git.Worktree{Path: t.TempDir(), Branch: "main"})
+	if !ok || len(results) != 0 || len(env) != 0 {
+		t.Errorf("no accessories should be a no-op: ok=%v results=%+v env=%v", ok, results, env)
+	}
+}
+
+func TestStartServicesBlockedByAccessoryFailure(t *testing.T) {
+	mgr, store := managerWithConfig(t, `
+[services.web]
+command = "sleep 60"
+port_range = { min = 19100, max = 19199 }
+proxy_port = 3000
+
+[accessories.db]
+kind = "faketest"
+fail = true
+`)
+	tree := &git.Worktree{Path: t.TempDir(), Branch: "main"}
+
+	results := mgr.StartServices(tree, "")
+
+	// The web service must not have started.
+	for _, r := range results {
+		if r.Service == "web" && r.Err == nil {
+			t.Error("web service should not start when accessory provisioning fails")
+		}
+	}
+	if _, ok := mgr.getRunner("main:web"); ok {
+		t.Error("no runner should exist for web")
+	}
+	// The accessory failure should be surfaced.
+	sawErr := false
+	for _, r := range results {
+		if r.Err != nil {
+			sawErr = true
+		}
+	}
+	if !sawErr {
+		t.Error("expected an accessory error in results")
+	}
+
+	st, _ := store.Load()
+	if ss := state.GetServiceState(st, "main", "web"); ss != nil && ss.Status == state.StatusRunning {
+		t.Error("web should not be recorded running")
+	}
+}
 
 func TestTargetServices(t *testing.T) {
 	cfg := &config.Config{

@@ -16,6 +16,42 @@ type Config struct {
 	Services  map[string]ServiceConfig `toml:"services"`
 	Env       map[string]string        `toml:"env"`
 	Worktrees map[string]WTOverride    `toml:"worktrees"`
+	// Accessories holds each [accessories.<name>] body as an undecoded TOML
+	// primitive. The shared "kind" field is read centrally; the rest is decoded
+	// lazily by the matching driver (see internal/accessory), so adding a kind
+	// touches no code here. See docs/adr/005-accessories.md.
+	Accessories map[string]toml.Primitive `toml:"accessories"`
+	// Meta is the TOML metadata retained so drivers can PrimitiveDecode their
+	// own fields out of the primitives above.
+	Meta toml.MetaData `toml:"-"`
+	// Proxy configures the reverse proxy that `isola up` auto-starts.
+	Proxy ProxyConfig `toml:"proxy"`
+}
+
+// ProxyConfig controls the reverse proxy `isola up` starts automatically.
+type ProxyConfig struct {
+	// Enabled toggles auto-starting the proxy on `isola up`. Unset means enabled;
+	// set `enabled = false` to opt out and manage the proxy yourself.
+	Enabled *bool `toml:"enabled"`
+	// HTTPS makes the auto-started proxy serve HTTPS with auto-generated certs.
+	HTTPS bool `toml:"https"`
+}
+
+// AutoProxyEnabled reports whether `isola up` should auto-start the proxy.
+func (c *Config) AutoProxyEnabled() bool {
+	return c.Proxy.Enabled == nil || *c.Proxy.Enabled
+}
+
+// AccessoryKind reads the "kind" discriminator from an accessory body without
+// decoding driver-specific fields.
+func (c *Config) AccessoryKind(prim toml.Primitive) (string, error) {
+	var disc struct {
+		Kind string `toml:"kind"`
+	}
+	if err := c.Meta.PrimitiveDecode(prim, &disc); err != nil {
+		return "", err
+	}
+	return disc.Kind, nil
 }
 
 // ServiceConfig defines a single service within a worktree.
@@ -76,9 +112,11 @@ func Load(repoRoot string) (*Config, error) {
 	}
 
 	var cfg Config
-	if err := toml.Unmarshal(data, &cfg); err != nil {
+	md, err := toml.Decode(string(data), &cfg)
+	if err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", FileName, err)
 	}
+	cfg.Meta = md
 
 	if cfg.Services == nil {
 		cfg.Services = map[string]ServiceConfig{}
@@ -88,6 +126,9 @@ func Load(repoRoot string) (*Config, error) {
 	}
 	if cfg.Worktrees == nil {
 		cfg.Worktrees = map[string]WTOverride{}
+	}
+	if cfg.Accessories == nil {
+		cfg.Accessories = map[string]toml.Primitive{}
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -137,6 +178,18 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	// Validate accessories declare a kind (driver-specific fields are checked
+	// by the driver when it is built).
+	for name, prim := range c.Accessories {
+		kind, err := c.AccessoryKind(prim)
+		if err != nil {
+			return fmt.Errorf("accessory %q: %w", name, err)
+		}
+		if kind == "" {
+			return fmt.Errorf("accessory %q: kind must not be empty", name)
+		}
+	}
+
 	// Check for port range overlaps between services.
 	svcNames := make([]string, 0, len(c.Services))
 	for name := range c.Services {
@@ -183,9 +236,28 @@ dir = "backend"
 port_range = { min = 8100, max = 8199 }
 proxy_port = 8000
 
+# --- Per-worktree accessories (optional) ---
+# Isolate stateful dependencies per worktree. isola provisions each accessory
+# on 'up' and tears it down on 'down --prune'. It connects to your existing
+# server and never manages the server itself.
+#
+# [accessories.primary]
+# kind       = "postgres"                                       # driver
+# server_url = "postgres://postgres@localhost:5432/postgres"    # existing server + maintenance db
+# clone_from = "myapp_dev"                                      # seeded template copied per worktree
+# name       = "myapp_${ISOLA_BRANCH_SLUG}"                     # per-worktree database name
+# inject     = "DATABASE_URL"                                   # env var injected into services
+# # url      = "postgres://app:app@localhost:5432/${db}"        # optional injected-URL override (${db} = name)
+
 # --- Global environment variables ---
 [env]
 # NODE_ENV = "development"
+
+# --- Reverse proxy ---
+# isola auto-starts the proxy on 'up' (http://<branch-slug>.localhost:<proxy_port>).
+# [proxy]
+# enabled = true    # set false to start it yourself with 'isola proxy start'
+# https   = false   # serve HTTPS with auto-generated certs
 
 # --- Per-worktree overrides (optional) ---
 # [worktrees.main]
