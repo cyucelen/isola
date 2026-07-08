@@ -11,6 +11,7 @@ import (
 
 	// Register built-in accessory drivers.
 	_ "github.com/cyucelen/isola/internal/accessory/postgres"
+	_ "github.com/cyucelen/isola/internal/accessory/redis"
 )
 
 var (

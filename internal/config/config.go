@@ -237,7 +237,7 @@ port_range = { min = 8100, max = 8199 }
 proxy_port = 8000
 
 # --- Per-worktree accessories (optional) ---
-# Isolate stateful dependencies per worktree. isola provisions each accessory
+# Isolate stateful dependencies per worktree. isola brings up each accessory
 # on 'up' and tears it down on 'down --prune'. It connects to your existing
 # server and never manages the server itself.
 #
@@ -248,6 +248,11 @@ proxy_port = 8000
 # name       = "myapp_${ISOLA_BRANCH_SLUG}"                     # per-worktree database name
 # inject     = "DATABASE_URL"                                   # env var injected into services
 # # url      = "postgres://app:app@localhost:5432/${db}"        # optional injected-URL override (${db} = name)
+#
+# [accessories.cache]
+# kind       = "redis"                                          # per-worktree Redis logical DB
+# server_url = "redis://localhost:6379"
+# inject     = "REDIS_URL"
 
 # --- Global environment variables ---
 [env]
