@@ -25,7 +25,6 @@ clean` removes the container.
 make all
 
 # Or generate individually
-make quickstart   # Basic usage demo
 make tui          # TUI dashboard demo
 make workflow     # Multi-worktree workflow demo
 ```
@@ -34,9 +33,8 @@ make workflow     # Multi-worktree workflow demo
 
 | File | Description | Output |
 |------|-------------|--------|
-| `demo-quickstart.tape` | Basic isola workflow: init → up → ls → proxy | `demo-quickstart.gif` |
-| `demo-tui.tape` | Interactive TUI dashboard demonstration | `demo-tui.gif` |
 | `demo-workflow.tape` | Multi-worktree development workflow | `demo-workflow.gif` |
+| `demo-tui.tape` | Interactive TUI dashboard demonstration | `demo-tui.gif` |
 
 ## Manual Generation
 
@@ -53,9 +51,8 @@ go build -o isola .
 # 3. Generate GIFs
 cd /tmp/isola-demo
 export PATH="/path/to/isola:$PATH"
-vhs /path/to/isola/demo/demo-quickstart.tape
-vhs /path/to/isola/demo/demo-tui.tape
 vhs /path/to/isola/demo/demo-workflow.tape
+vhs /path/to/isola/demo/demo-tui.tape
 ```
 
 ## Customization
@@ -76,5 +73,5 @@ After generating, move the GIFs and update the main README:
 ```markdown
 ## Demo
 
-![Quick Start](./demo/demo-quickstart.gif)
+![isola workflow demo](./demo/demo-workflow.gif)
 ```

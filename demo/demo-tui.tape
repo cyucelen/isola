@@ -10,10 +10,10 @@ Set Shell "bash"
 Set FontSize 16
 Set Width 1000
 Set Height 600
-Set Theme "Catppuccin Mocha"
+Set Theme { "background": "#0c1117", "foreground": "#c9d1d9", "selection": "#264f78", "cursor": "#c9d1d9", "black": "#484f58", "brightBlack": "#6e7681", "red": "#ff7b72", "brightRed": "#ffa198", "green": "#3fb950", "brightGreen": "#56d364", "yellow": "#d29922", "brightYellow": "#e3b341", "blue": "#58a6ff", "brightBlue": "#79c0ff", "magenta": "#bc8cff", "brightMagenta": "#d2a8ff", "cyan": "#39c5cf", "brightCyan": "#56d4dd", "white": "#b1bac4", "brightWhite": "#f0f6fc" }
 Set Padding 20
 Set Framerate 30
-Set PlaybackSpeed 0.75
+Set PlaybackSpeed 1.0
 
 # Setup: create a second worktree and start each worktree's services
 Hide
@@ -72,6 +72,9 @@ Sleep 1.5s
 # Start all
 Type "a"
 Sleep 1.5s
+
+# Hold on the dashboard so viewers can read it
+Sleep 30s
 
 # Quit
 Type "q"
