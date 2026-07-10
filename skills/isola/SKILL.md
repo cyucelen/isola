@@ -6,7 +6,7 @@ description: Use isola to run and isolate per-git-worktree dev environments — 
 # isola
 
 isola runs each service in `.isola.toml` **per git worktree** with automatic
-per-branch port allocation and `<branch-slug>.localhost` reverse-proxy routing,
+per-branch port allocation and `<branch-slug>.<project>.localhost` reverse-proxy routing,
 and can give each worktree its own database. It spawns your existing dev
 commands directly (no Docker) and connects to your existing Postgres — it never
 manages a server itself. Worktrees are created with plain `git worktree`; isola
@@ -27,9 +27,12 @@ isola accessory ls|up|reset|drop [name]           # per-worktree databases (up =
 isola doctor                   # health checks
 ```
 
-Service URLs: `http://<branch-slug>.localhost:<proxy_port>` (bare `localhost` = `main`).
-Injected env: `PORT`, `ISOLA_BRANCH`, `ISOLA_BRANCH_SLUG`, `ISOLA_SERVICE`,
-`ISOLA_<SVC>_PORT`, `ISOLA_<SVC>_URL`, plus any accessory `inject` var.
+Service URLs (one machine-wide proxy): `http://<branch-slug>.<project>.localhost:<proxy_port>`.
+Built-in env: `PORT`, `ISOLA_BRANCH`, `ISOLA_BRANCH_SLUG`, `ISOLA_SERVICE`,
+`ISOLA_<SVC>_PORT`, `ISOLA_<SVC>_URL`. Declare your own per service under
+`[services.<name>].env`, referencing `${accessories.<name>.url}`,
+`${services.<name>.url}`, or `${services.<name>.port}`; each service's env is
+delivered to its process and (per `[env_file]`) its env file.
 On `up`, gitignored files matching `copy_files` (default `[".env"]`, a top-level
 key) are copied from the main worktree into each worktree, never overwriting.
 
@@ -37,7 +40,9 @@ key) are copied from the main worktree into each worktree, never overwriting.
 
 Read the file that matches the task (don't load them all up front):
 
-- **references/setup.md** — creating `.isola.toml`, defining services, HTTPS, env vars.
 - **references/dev.md** — day-to-day: worktrees, `up`/`down`/`ls`/`dash`/`proxy`/`logs`.
 - **references/databases.md** — per-worktree Postgres via `[accessories]` and `isola accessory …`.
 - **references/troubleshoot.md** — failed starts, ports, proxy/slug issues, database errors.
+
+To set up isola in a repo for the first time (write `.isola.toml`), use the
+separate **isola-init** skill.

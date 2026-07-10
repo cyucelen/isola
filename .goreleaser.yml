@@ -54,7 +54,7 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Formula
     homepage: https://github.com/cyucelen/isola
-    description: Git Worktree Server Manager
+    description: "Isolated dev environment for every git worktree: ports, proxy, and databases"
     license: MIT
     install: |
       bin.install "isola"
@@ -67,7 +67,7 @@ nfpms:
     vendor: cyucelen
     homepage: https://github.com/cyucelen/isola
     maintainer: cyucelen <cagatayyucelen@gmail.com>
-    description: Git Worktree Server Manager
+    description: "Isolated dev environment for every git worktree: ports, proxy, and databases"
     license: MIT
     formats:
       - deb

@@ -121,7 +121,7 @@ DEMO_MODE = "true"
 
 # Per-worktree database: each worktree gets its own copy of the myapp_dev
 # template, injected into services as DATABASE_URL.
-[accessories.primary]
+[accessories.database]
 kind       = "postgres"
 server_url = "postgres://isola:isola@localhost:55432/isola"
 clone_from = "myapp_dev"

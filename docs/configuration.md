@@ -31,23 +31,23 @@ there. Defaults to `[".env"]`; set `copy_files = []` to disable.
 copy_files = [".env", ".env.*", "config/local.yml"]
 ```
 
-After copying, isola upserts each accessory's `inject` key (e.g. `DATABASE_URL`)
-into the worktree's `.env`, setting it to that worktree's isolated URL. It only
-touches those keys (the rest of your `.env` is left alone), so tools that read
-`.env` directly, not just the process environment, still get an isolated
-database even if the copied `.env` named a shared one. See
-[Environment Variables](../README.md#environment-variables).
+`copy_files` only seeds files into a fresh worktree and never overwrites. To
+write a service's resolved env (accessory URLs, `${...}` refs, your `env`) into a
+file the app reads, so file-reading tools get this worktree's isolated values,
+see [`[env_file]`](#env_file).
 
 ## `[services.<name>]`
 
 Define one or more services. Each worktree will run all defined services.
 
-| Field        | Type         | Required | Description                                                 |
-| ------------ | ------------ | -------- | ----------------------------------------------------------- |
-| `command`    | string       | yes      | Shell command to start the service                          |
-| `dir`        | string       | no       | Working directory relative to worktree root (default: root) |
-| `port_range` | `{min, max}` | yes      | Port allocation range for this service                      |
-| `proxy_port` | int          | yes      | Port the reverse proxy listens on for this service          |
+| Field        | Type         | Required | Description                                                                     |
+| ------------ | ------------ | -------- | ------------------------------------------------------------------------------- |
+| `command`    | string       | yes      | Shell command to start the service                                              |
+| `dir`        | string       | no       | Working directory relative to worktree root (default: root)                     |
+| `port_range` | `{min, max}` | yes      | Port allocation range for this service                                          |
+| `proxy_port` | int          | yes      | Port the reverse proxy listens on for this service                              |
+| `env`        | table        | no       | Environment for this service; values may reference `${...}` (see below)         |
+| `env_file`   | string       | no       | Env-file name for this service (relative to `dir`); overrides [`[env_file]`](#env_file) `path`; `""` opts out |
 
 ```toml
 [services.frontend]
@@ -55,7 +55,21 @@ command = "pnpm run dev"
 dir = "frontend"
 port_range = { min = 3100, max = 3199 }
 proxy_port = 3000
+env = { NODE_ENV = "development", API_URL = "${services.backend.url}" }
 ```
+
+Env values can reference isola-provided sources with `${...}`:
+
+| Reference                | Resolves to                                              |
+| ------------------------ | -------------------------------------------------------- |
+| `${accessories.<name>.url}` | the accessory's connection string                     |
+| `${services.<name>.url}`    | a sibling's proxy URL (`<slug>.<project>.localhost:<proxy_port>`) |
+| `${services.<name>.port}`   | a sibling's allocated backend port                    |
+| `${proxy.ca_cert}`          | path to isola's dev CA (HTTPS only; empty otherwise), e.g. `NODE_EXTRA_CA_CERTS = "${proxy.ca_cert}"` |
+
+Plus the isola built-ins (`PORT`, `ISOLA_*`) and your shell. A bare `$` is left
+literal, so a value like `p$ssw0rd` survives unchanged. There is no global
+`[env]`; declare env per service.
 
 > [!IMPORTANT]
 > **Make your command bind the allocated `$PORT`.** isola injects the
@@ -79,44 +93,60 @@ proxy_port = 3000
 > `PORT` inside `vite.config.ts` as shown above. (See
 > [#9](https://github.com/cyucelen/isola/issues/9).)
 
-## `[env]`
+## `[env_file]`
 
-Global environment variables injected into all services. See
-[Environment Variables](../README.md#environment-variables) for how these combine
-with isola's injected variables and per-service/per-worktree overrides.
+Besides the process environment, isola writes each service's resolved env into an
+env file the app reads, so tools that read the file directly (dotenv loaders,
+Prisma, Vite, `docker-compose`) get this worktree's isolated values. The file
+carries the service's `env` (expanded) plus the accessory keys; ephemeral
+built-ins (`PORT`, `ISOLA_*`) are excluded.
+
+| Field     | Type   | Required | Description                                                              |
+| --------- | ------ | -------- | ------------------------------------------------------------------------ |
+| `enabled` | bool   | no       | Write env into services' env files (default `true`)                      |
+| `create`  | bool   | no       | Create the file if missing (default `false`: only update an existing one) |
+| `path`    | string | no       | Default env-file name, relative to each service's `dir` (default `.env`)  |
 
 ```toml
-[env]
-NODE_ENV = "development"
-LOG_LEVEL = "debug"
+[env_file]
+enabled = true
+create  = false
+path    = ".env"
 ```
+
+The file is resolved per service as `<dir>/<path>`; a service overrides the name
+with its own `env_file`. In a monorepo this writes each app's isolated values
+into its own file (`apps/web/.env`, `apps/api/.env`, …). Whether a tool reads the
+process environment or the file, it gets the same values.
 
 ## `[accessories.<name>]`
 
 Give each worktree its own isolated stateful dependency. isola brings it up on
 `isola up` and drops it on `isola down --prune`, connecting to your existing
-server (it never manages the server itself) and injecting a connection string
-into your services (both the process environment and, if the worktree has one,
-its `.env`). The fields depend on `kind`; two built-in kinds ship today.
+server (it never manages the server itself). It exposes a connection string that
+a service references explicitly as `${accessories.<name>.url}` (there is no
+auto-injected key). The fields depend on `kind`; two built-in kinds ship today.
 
 **`kind = "postgres"`** clones a seeded template database per worktree:
 
-| Field        | Type   | Required | Description                                                                                                        |
-| ------------ | ------ | -------- | ------------------------------------------------------------------------------------------------------------------ |
-| `kind`       | string | yes      | `postgres` (bare names are built-in; `vendor/name` is reserved for third-party drivers)                            |
-| `server_url` | string | yes      | Existing server + maintenance database, used to create/drop. Must be a `postgres://` URL                           |
-| `clone_from` | string | yes      | Seeded template database copied for each worktree (kept quiescent, never run against)                              |
+| Field        | Type   | Required | Description                                                                                                       |
+| ------------ | ------ | -------- | ----------------------------------------------------------------------------------------------------------------- |
+| `kind`       | string | yes      | `postgres` (bare names are built-in; `vendor/name` is reserved for third-party drivers)                           |
+| `server_url` | string | yes      | Existing server + maintenance database, used to create/drop. Must be a `postgres://` URL                          |
+| `clone_from` | string | yes      | Seeded template database copied for each worktree (kept quiescent, never run against)                             |
 | `name`       | string | yes      | Per-worktree database name; supports `${VAR}` (e.g. `${ISOLA_BRANCH_SLUG}`)                                        |
-| `inject`     | string | yes      | Env var set on services holding the worktree's connection string (e.g. `DATABASE_URL`)                             |
-| `url`        | string | no       | Override for the injected connection string; supports `${db}` (defaults to `server_url` with the database swapped) |
+| `url`        | string | no       | Override for the exposed connection string; supports `${db}` (defaults to `server_url` with the database swapped) |
 
 ```toml
-[accessories.primary]
+[accessories.database]
 kind       = "postgres"
 server_url = "postgres://postgres@localhost:5432/postgres"
 clone_from = "myapp_dev"
 name       = "myapp_${ISOLA_BRANCH_SLUG}"
-inject     = "DATABASE_URL"
+
+# A service uses it:
+[services.backend.env]
+DATABASE_URL = "${accessories.database.url}"
 ```
 
 > [!NOTE]
@@ -127,18 +157,20 @@ inject     = "DATABASE_URL"
 **`kind = "redis"`** gives each worktree its own Redis logical database, allocated
 collision-free and flushed on reset/drop:
 
-| Field        | Type   | Required | Description                                                        |
-| ------------ | ------ | -------- | ------------------------------------------------------------------ |
-| `kind`       | string | yes      | `redis`                                                            |
-| `server_url` | string | yes      | Existing Redis server, e.g. `redis://localhost:6379`               |
-| `inject`     | string | yes      | Env var set on services with the worktree's URL (e.g. `REDIS_URL`) |
-| `databases`  | int    | no       | Number of logical DBs the server exposes (default `16`)            |
+| Field        | Type   | Required | Description                                             |
+| ------------ | ------ | -------- | ------------------------------------------------------- |
+| `kind`       | string | yes      | `redis`                                                 |
+| `server_url` | string | yes      | Existing Redis server, e.g. `redis://localhost:6379`    |
+| `databases`  | int    | no       | Number of logical DBs the server exposes (default `16`) |
 
 ```toml
 [accessories.cache]
 kind       = "redis"
 server_url = "redis://localhost:6379"
-inject     = "REDIS_URL"
+
+# A service uses it:
+[services.worker.env]
+REDIS_URL = "${accessories.cache.url}"
 ```
 
 > [!NOTE]

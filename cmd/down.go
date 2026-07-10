@@ -26,7 +26,7 @@ var (
 
 var downCmd = &cobra.Command{
 	Use:   "down",
-	Short: "Stop dev servers for the current worktree",
+	Short: "Stop services for the current worktree",
 	Long:  "Stops all running services (or a specific one) for the current worktree, or all worktrees with --all.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cwd, err := os.Getwd()

@@ -32,5 +32,5 @@ failures and their fixes.
 
 - Auto-generated certificates are stored in `.isola/certs/` when HTTPS is on.
 - **Browser warnings / `SSL certificate problem`?** The CA is not trusted yet. isola tries to install it on the first HTTPS `isola up` in a terminal, but a non-interactive `up` (an agent, CI) skips that. Run `isola trust` once in a terminal to install the CA, or click through the browser warning. Disable the auto behavior with `[proxy] auto_trust = false`.
-- The CA and certificates are shared machine-wide, under isola's global config dir (`ca.crt` in `~/Library/Application Support/isola/certs` on macOS, `~/.config/isola/certs` on Linux), so `isola trust` runs once and covers every project.
+- The CA and certificates are shared machine-wide, under isola's global state dir (`ca.crt` in `~/.isola/certs`), so `isola trust` runs once and covers every project.
 - To verify with curl: `curl --cacert <that-ca.crt> https://main.myapp.localhost:3000`.

@@ -2,7 +2,12 @@
 
 ## Status
 
-Accepted
+Accepted.
+
+> **Update:** the `inject` field described below was later removed. An accessory
+> no longer auto-injects a keyed env var; instead it exposes its connection
+> string, which a service references explicitly as `${accessories.<name>.url}`
+> in its own `env`. See the [Configuration Reference](../configuration.md#accessoriesname).
 
 ## Context
 
@@ -64,7 +69,7 @@ A new top-level `[accessories.*]` table in `.isola.toml`. Each accessory names
 a `kind` (the driver discriminator) and carries driver-specific fields:
 
 ```toml
-[accessories.primary]
+[accessories.database]
 kind       = "postgres"                                       # driver discriminator (K8s-style). NOT "type" (a Go keyword)
 server_url = "postgres://postgres@localhost:5432/postgres"    # existing server + doorway db, used for CREATE/DROP
 clone_from = "myapp_dev"                                      # seeded source database copied per worktree

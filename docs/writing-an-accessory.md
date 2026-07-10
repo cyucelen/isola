@@ -5,8 +5,9 @@ MongoDB, a message queue, ...) is a self-contained package. To add one:
 
 1. Implement the `Accessory` interface (`Name`, `Kind`, `Provision`, `Drop`; plus
    the optional `Resettable` if your kind has a template to reset to). `Provision`
-   creates the per-worktree resource and returns the env vars to inject plus an
-   opaque handle isola persists for teardown.
+   creates the per-worktree resource and returns a connection URL (which services
+   reference as `${accessories.<name>.url}`) plus an opaque handle isola persists
+   for teardown.
 2. Register it from an `init()` with `accessory.Register("yourkind", New)`.
 3. Blank-import your package so the registration runs.
 

@@ -42,7 +42,7 @@ predictable URLs and no cross-project data bleed.
    clash between two repos is detected and requires an explicit `project`. This
    name namespaces both proxy routing and Redis ownership.
 
-2. **Global registry.** `~/.isola/registry.json` (XDG-aware), file-locked like
+2. **Global registry.** `~/.isola/registry.json` (in the user's home dir, mirroring the per-repo `.isola`), file-locked like
    the per-repo state. It stores only a list of registered projects:
    `{project, stateDir, proxyPorts[]}`. It does **not** cache backend ports; the
    daemon resolves live by loading each project's own state per request, reusing

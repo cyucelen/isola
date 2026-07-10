@@ -31,8 +31,8 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:           "isola",
-	Short:         "Git Worktree Server Manager",
-	Long:          "isola manages multiple dev servers per git worktree with automatic port allocation and reverse proxy routing.",
+	Short:         "Isolated dev environments per git worktree",
+	Long:          "isola runs an isolated dev environment for each git worktree: its own services (stable ports and *.localhost URLs), env vars, and database cloned from a template and dropped with the worktree.",
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {

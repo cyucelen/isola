@@ -2,7 +2,7 @@
 
 ## Overview
 
-isola is a Git Worktree Server Manager that enables running multiple development servers across git worktrees with automatic port allocation and subdomain-based routing.
+isola runs an isolated dev environment per git worktree: its own services (automatic port allocation and subdomain-based routing), env vars, and a per-worktree database cloned from a template.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
