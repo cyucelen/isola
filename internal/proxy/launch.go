@@ -8,34 +8,28 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cyucelen/isola/internal/state"
+	"github.com/cyucelen/isola/internal/registry"
 )
 
-// startTimeout bounds how long EnsureRunning waits for a freshly spawned proxy
-// to bind its ports and record itself as running.
-const startTimeout = 3 * time.Second
+// startTimeout bounds how long EnsureDaemon waits for a freshly spawned daemon
+// to record itself running.
+const startTimeout = 5 * time.Second
 
-// IsRunning reports whether a proxy recorded in state is alive.
-func IsRunning(store *state.FileStore) (bool, error) {
-	running := false
-	err := store.WithLock(func() error {
-		st, e := store.Load()
-		if e != nil {
-			return e
-		}
-		running = st.Proxy.Status == state.StatusRunning && st.Proxy.PID > 0 && isAlive(st.Proxy.PID)
-		return nil
-	})
-	return running, err
+// DaemonRunning reports whether the machine-wide proxy daemon is alive.
+func DaemonRunning(reg *registry.Store) (bool, error) {
+	d, err := reg.GetDaemon()
+	if err != nil {
+		return false, err
+	}
+	return d.Running && d.PID > 0 && isAlive(d.PID), nil
 }
 
-// EnsureRunning starts the reverse proxy as a detached background process if one
-// is not already running, and returns true if it started a new one. The child
-// is `isola proxy start` launched from workDir (so it detects the same repo),
-// its output going to proxy.log under logDir; it survives this process exiting,
-// exactly like a service. https selects the scheme.
-func EnsureRunning(store *state.FileStore, workDir, logDir string, https bool) (bool, error) {
-	if running, err := IsRunning(store); err != nil || running {
+// EnsureDaemon starts the machine-wide proxy daemon as a detached process if one
+// is not already running, and returns true if it started a new one. The daemon
+// is `isola proxy start`; its output goes to proxy.log under the registry's
+// global dir, and it survives this process exiting.
+func EnsureDaemon(reg *registry.Store) (bool, error) {
+	if running, err := DaemonRunning(reg); err != nil || running {
 		return false, err
 	}
 
@@ -43,6 +37,7 @@ func EnsureRunning(store *state.FileStore, workDir, logDir string, https bool) (
 	if err != nil {
 		return false, fmt.Errorf("locating isola binary: %w", err)
 	}
+	logDir := filepath.Join(reg.Dir(), "logs")
 	if err := os.MkdirAll(logDir, 0700); err != nil {
 		return false, fmt.Errorf("creating log dir: %w", err)
 	}
@@ -52,51 +47,40 @@ func EnsureRunning(store *state.FileStore, workDir, logDir string, https bool) (
 	}
 	defer func() { _ = logFile.Close() }()
 
-	args := []string{"proxy", "start"}
-	if https {
-		args = append(args, "--https")
-	}
-	cmd := exec.Command(exe, args...)
-	cmd.Dir = workDir
+	cmd := exec.Command(exe, "proxy", "start")
+	cmd.Dir = reg.Dir()
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
-	// New process group so the proxy survives this CLI exiting and is not hit by
-	// a terminal signal sent to the parent's group.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
-		return false, fmt.Errorf("starting proxy: %w", err)
+		return false, fmt.Errorf("starting proxy daemon: %w", err)
 	}
 
-	// Wait for the child to bind its ports and record itself running.
 	deadline := time.Now().Add(startTimeout)
 	for time.Now().Before(deadline) {
 		time.Sleep(100 * time.Millisecond)
-		if running, _ := IsRunning(store); running {
+		if running, _ := DaemonRunning(reg); running {
 			return true, nil
 		}
 	}
-	return false, fmt.Errorf("proxy did not start within %s; see %s", startTimeout, filepath.Join(logDir, "proxy.log"))
+	return false, fmt.Errorf("proxy daemon did not start within %s; see %s", startTimeout, filepath.Join(logDir, "proxy.log"))
 }
 
-// Stop signals a running proxy to shut down and marks it stopped in state. It
-// returns true if a running proxy was found.
-func Stop(store *state.FileStore) (bool, error) {
+// StopDaemon signals the running daemon to shut down and clears its recorded
+// state. It returns true if a running daemon was found.
+func StopDaemon(reg *registry.Store) (bool, error) {
+	d, err := reg.GetDaemon()
+	if err != nil {
+		return false, err
+	}
 	stopped := false
-	err := store.WithLock(func() error {
-		st, e := store.Load()
-		if e != nil {
-			return e
+	if d.PID > 0 && d.Running && isAlive(d.PID) {
+		if p, err := os.FindProcess(d.PID); err == nil {
+			_ = p.Signal(syscall.SIGTERM)
 		}
-		if st.Proxy.PID > 0 && st.Proxy.Status == state.StatusRunning && isAlive(st.Proxy.PID) {
-			if p, err := os.FindProcess(st.Proxy.PID); err == nil {
-				_ = p.Signal(syscall.SIGTERM)
-			}
-			stopped = true
-		}
-		st.Proxy = state.ProxyState{Status: state.StatusStopped}
-		return store.Save(st)
-	})
-	return stopped, err
+		stopped = true
+	}
+	return stopped, reg.SetDaemon(registry.Daemon{})
 }
 
 func isAlive(pid int) bool {

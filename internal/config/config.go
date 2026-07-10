@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -13,6 +14,11 @@ const FileName = ".isola.toml"
 
 // Config represents the .isola.toml configuration file.
 type Config struct {
+	// Project is this repo's machine-wide identity, used to namespace shared
+	// proxy routing (<branch>.<project>.localhost) and Redis ownership. Unset
+	// defaults to the main worktree's directory basename (slugified). It must be
+	// a DNS label since it appears in a subdomain. See docs/adr/006-shared-proxy.md.
+	Project   string                   `toml:"project"`
 	Services  map[string]ServiceConfig `toml:"services"`
 	Env       map[string]string        `toml:"env"`
 	Worktrees map[string]WTOverride    `toml:"worktrees"`
@@ -48,11 +54,84 @@ type ProxyConfig struct {
 	Enabled *bool `toml:"enabled"`
 	// HTTPS makes the auto-started proxy serve HTTPS with auto-generated certs.
 	HTTPS bool `toml:"https"`
+	// AutoTrust toggles installing isola's CA into the system trust store on the
+	// first HTTPS `up` (interactive terminals only). Unset means enabled; set
+	// `auto_trust = false` to keep trust a manual `isola trust` step.
+	AutoTrust *bool `toml:"auto_trust"`
 }
 
 // AutoProxyEnabled reports whether `isola up` should auto-start the proxy.
 func (c *Config) AutoProxyEnabled() bool {
 	return c.Proxy.Enabled == nil || *c.Proxy.Enabled
+}
+
+// AutoTrustEnabled reports whether `isola up` may auto-install the HTTPS CA into
+// the system trust store on an interactive first run.
+func (c *Config) AutoTrustEnabled() bool {
+	return c.Proxy.AutoTrust == nil || *c.Proxy.AutoTrust
+}
+
+// ProjectName returns the configured project, or a slugified basename of
+// stateRoot when unset. All worktrees of a repo share the same stateRoot, so the
+// default is stable across worktrees.
+func (c *Config) ProjectName(stateRoot string) string {
+	if c.Project != "" {
+		return c.Project
+	}
+	if s := slugifyLabel(filepath.Base(stateRoot)); s != "" {
+		return s
+	}
+	return "project"
+}
+
+// slugifyLabel lowercases s and replaces runs of non-alphanumeric characters
+// with a single hyphen, trimming leading/trailing hyphens, so a directory name
+// becomes a valid DNS label.
+func slugifyLabel(s string) string {
+	var b []byte
+	prevHyphen := false
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b = append(b, byte(r))
+			prevHyphen = false
+		} else if !prevHyphen {
+			b = append(b, '-')
+			prevHyphen = true
+		}
+	}
+	return strings.Trim(string(b), "-")
+}
+
+// isValidLabel reports whether s is a legal DNS label (lowercase alphanumeric
+// and hyphens, not starting or ending with a hyphen, at most 63 bytes).
+func isValidLabel(s string) bool {
+	if s == "" || len(s) > 63 || s[0] == '-' || s[len(s)-1] == '-' {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+		case c >= '0' && c <= '9':
+		case c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// ProxyPorts returns the distinct proxy_ports across all configured services.
+func (c *Config) ProxyPorts() []int {
+	seen := map[int]bool{}
+	var ports []int
+	for _, svc := range c.Services {
+		if !seen[svc.ProxyPort] {
+			seen[svc.ProxyPort] = true
+			ports = append(ports, svc.ProxyPort)
+		}
+	}
+	return ports
 }
 
 // AccessoryKind reads the "kind" discriminator from an accessory body without
@@ -156,6 +235,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("at least one service must be defined in [services]")
 	}
 
+	if c.Project != "" && !isValidLabel(c.Project) {
+		return fmt.Errorf("project %q must be a DNS label: lowercase letters, digits, and hyphens, not starting or ending with a hyphen", c.Project)
+	}
+
 	proxyPorts := make(map[int]string)
 	for name, svc := range c.Services {
 		if svc.Command == "" {
@@ -233,6 +316,12 @@ func Init(dir string) (string, error) {
 	content := `# isola - Git Worktree Server Manager configuration
 # See: https://github.com/cyucelen/isola
 
+# --- Project name ---
+# Namespaces this repo across the shared proxy (<branch>.<project>.localhost) and
+# per-worktree Redis. Defaults to this repo's directory name; set it only to
+# override or to resolve a clash with another repo of the same name.
+# project = "myapp"
+
 # --- Files copied into each worktree ---
 # Gitignored files (absent from new worktrees) copied from the main worktree on
 # 'isola up'. Existing files are never overwritten. Defaults to [".env"]; set to
@@ -280,8 +369,9 @@ proxy_port = 8000
 # --- Reverse proxy ---
 # isola auto-starts the proxy on 'up' (http://<branch-slug>.localhost:<proxy_port>).
 # [proxy]
-# enabled = true    # set false to start it yourself with 'isola proxy start'
-# https   = false   # serve HTTPS with auto-generated certs
+# enabled    = true    # set false to start it yourself with 'isola proxy start'
+# https      = false   # serve HTTPS with auto-generated certs
+# auto_trust = true    # with https, trust the CA on first interactive 'up' (set false for manual 'isola trust')
 
 # --- Per-worktree overrides (optional) ---
 # [worktrees.main]

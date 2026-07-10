@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cyucelen/isola/internal/copyfiles"
 	"github.com/cyucelen/isola/internal/git"
@@ -12,7 +13,9 @@ import (
 	"github.com/cyucelen/isola/internal/port"
 	"github.com/cyucelen/isola/internal/process"
 	"github.com/cyucelen/isola/internal/proxy"
+	"github.com/cyucelen/isola/internal/registry"
 	"github.com/cyucelen/isola/internal/state"
+	"github.com/cyucelen/isola/internal/trust"
 	"github.com/spf13/cobra"
 )
 
@@ -44,8 +47,8 @@ var upCmd = &cobra.Command{
 			return fmt.Errorf("creating state store: %w", err)
 		}
 
-		registry := port.NewRegistry(store, cfg)
-		mgr := process.NewManager(cfg, store, registry)
+		portReg := port.NewRegistry(store, cfg)
+		mgr := process.NewManager(cfg, store, portReg)
 
 		var trees []git.Worktree
 		if upAll {
@@ -107,27 +110,76 @@ var upCmd = &cobra.Command{
 			}
 		}
 
-		// Auto-start the reverse proxy in the background (unless disabled) so
-		// services are reachable at *.localhost without a separate command.
+		// Register this project with the shared proxy and ensure the machine-wide
+		// daemon is running (unless disabled), so services are reachable at
+		// <branch>.<project>.localhost without a separate command.
 		if cfg.AutoProxyEnabled() {
-			logDir := filepath.Join(store.Dir(), "logs")
-			started, err := proxy.EnsureRunning(store, cwd, logDir, cfg.Proxy.HTTPS)
-			scheme := "http"
-			if cfg.Proxy.HTTPS {
-				scheme = "https"
-			}
-			switch {
-			case err != nil:
-				logging.Warn("proxy auto-start failed: %v", err)
-			case started:
-				logging.Info("✓ proxy started; reach services at %s://<branch-slug>.localhost:<proxy_port>", scheme)
-			default:
-				logging.Verbose("proxy already running")
+			reg, err := registry.Open()
+			if err != nil {
+				logging.Warn("proxy registry unavailable: %v", err)
+			} else if err := reg.Register(registry.Project{
+				Name:       cfg.Project,
+				StateDir:   store.Dir(),
+				ProxyPorts: cfg.ProxyPorts(),
+				HTTPS:      cfg.Proxy.HTTPS,
+			}); err != nil {
+				logging.Warn("registering project with proxy: %v", err)
+			} else {
+				started, derr := proxy.EnsureDaemon(reg)
+				switch {
+				case derr != nil:
+					logging.Warn("proxy daemon start failed: %v", derr)
+				case started:
+					logging.Info("✓ proxy started")
+				default:
+					logging.Verbose("proxy already running")
+				}
+				scheme := "http"
+				if cfg.Proxy.HTTPS {
+					scheme = "https"
+				}
+				logging.Info("Reach services at %s://<branch-slug>.%s.localhost:<proxy_port>", scheme, cfg.Project)
+
+				// With HTTPS, trust the shared CA so browsers don't warn. Never
+				// blocks `up`; only runs on an interactive terminal.
+				if derr == nil && cfg.Proxy.HTTPS && cfg.AutoTrustEnabled() {
+					ensureHTTPSTrust(filepath.Join(reg.Dir(), "certs", "ca.crt"))
+				}
 			}
 		}
 
 		return nil
 	},
+}
+
+// ensureHTTPSTrust trusts the auto-generated HTTPS CA so browsers accept it.
+// It never fails `up`: if trust is not already established it installs it on an
+// interactive terminal (one password prompt), and if that is declined,
+// unsupported, or the session is non-interactive, it warns and returns.
+func ensureHTTPSTrust(caPath string) {
+	// The proxy writes the CA as it starts; give it a moment to appear.
+	for i := 0; i < 20; i++ {
+		if _, err := os.Stat(caPath); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if _, err := os.Stat(caPath); err != nil {
+		return // no CA to trust yet
+	}
+	if trust.IsTrusted(caPath) {
+		return
+	}
+	if !trust.Supported() || !trust.Interactive() {
+		logging.Warn("HTTPS CA not trusted; browsers will warn. Run `isola trust` once in a terminal, or click through the warning.")
+		return
+	}
+	logging.Info("HTTPS CA not yet trusted; installing it now (you may be prompted for your password).")
+	if err := trust.Install(caPath); err != nil {
+		logging.Warn("could not install the HTTPS CA (%v); continuing. Browsers will warn until you run `isola trust`.", err)
+		return
+	}
+	logging.Info("✓ HTTPS CA trusted")
 }
 
 func init() {

@@ -180,7 +180,7 @@ func accessoryForEach(args []string, fn func(context.Context, *state.FileStore, 
 	if err != nil {
 		return err
 	}
-	wt := accessory.FromWorktree(tree)
+	wt := accessory.FromWorktree(tree, cfg.Project)
 
 	var firstErr error
 	for _, name := range names {

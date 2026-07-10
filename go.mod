@@ -13,6 +13,7 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/testcontainers/testcontainers-go v0.43.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0
+	golang.org/x/term v0.43.0
 )
 
 require (

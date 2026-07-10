@@ -73,8 +73,11 @@ var rootCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("loading config: %w", err)
 		}
+		// Resolve the project name once (default: main worktree basename) so all
+		// downstream use (proxy routing, Redis ownership) shares one identity.
+		cfg.Project = cfg.ProjectName(stateRoot)
 
-		logging.Verbose("loaded config with %d service(s)", len(cfg.Services))
+		logging.Verbose("loaded config for project %q with %d service(s)", cfg.Project, len(cfg.Services))
 
 		return nil
 	},

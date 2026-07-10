@@ -60,3 +60,29 @@ _Avoid_: refresh, reseed, rebuild
 **Drop**:
 Tear down a worktree's accessory resource.
 _Avoid_: delete, destroy, remove, teardown
+
+## Multi-project (shared proxy)
+
+**Project**:
+A single isola-managed repository, identified by the `project` name in
+`.isola.toml` (default: the main-worktree directory basename). Namespaces
+routing and Redis ownership so multiple repos coexist on one machine.
+_Avoid_: app, service, workspace, repo (repo is the VCS artifact; the Project is
+the isola-managed unit)
+
+**Registry**:
+The machine-wide list of registered Projects (`~/.isola/registry.json`):
+`{project, stateDir, proxyPorts}` per Project. The shared proxy reads it to route
+across Projects; it stores no backend ports (those are resolved live from each
+Project's state).
+_Avoid_: index, catalog, directory
+
+**Daemon**:
+The single machine-wide reverse proxy process serving every Project, bound to the
+union of all Projects' proxy ports. Distinct from a per-repo proxy.
+_Avoid_: server, service, gateway
+
+**Qualified URL**:
+A project-qualified address `<branch-slug>.<project>.localhost:<port>`. Always
+required; the bare `<branch-slug>.localhost` form is not routed.
+_Avoid_: subdomain, vanity URL

@@ -101,11 +101,21 @@ func (d *driver) Provision(ctx context.Context, wt accessory.WorktreeInfo) (acce
 	}
 	defer func() { _ = s.close() }()
 
-	db, err := d.allocate(ctx, s, wt.Slug)
+	db, err := d.allocate(ctx, s, ownerID(wt))
 	if err != nil {
 		return accessory.Provisioned{}, err
 	}
 	return d.provisioned(wt, db), nil
+}
+
+// ownerID is the value written to a logical DB's owner marker. It is qualified
+// by project so two projects sharing a Redis server (and a branch name) never
+// collide on the same logical DB.
+func ownerID(wt accessory.WorktreeInfo) string {
+	if wt.Project != "" {
+		return wt.Project + ":" + wt.Slug
+	}
+	return wt.Slug
 }
 
 // Reset flushes the worktree's logical DB back to empty (its baseline), keeping
@@ -117,7 +127,7 @@ func (d *driver) Reset(ctx context.Context, wt accessory.WorktreeInfo) (accessor
 	}
 	defer func() { _ = s.close() }()
 
-	db, err := d.allocate(ctx, s, wt.Slug)
+	db, err := d.allocate(ctx, s, ownerID(wt))
 	if err != nil {
 		return accessory.Provisioned{}, err
 	}
@@ -125,7 +135,7 @@ func (d *driver) Reset(ctx context.Context, wt accessory.WorktreeInfo) (accessor
 		return accessory.Provisioned{}, fmt.Errorf("flushing redis db %d: %w", db, err)
 	}
 	// FLUSHDB removed the owner marker; re-establish ownership.
-	if err := s.setOwner(ctx, db, wt.Slug); err != nil {
+	if err := s.setOwner(ctx, db, ownerID(wt)); err != nil {
 		return accessory.Provisioned{}, fmt.Errorf("re-marking redis db %d: %w", db, err)
 	}
 	return d.provisioned(wt, db), nil
@@ -185,7 +195,7 @@ func (d *driver) allocate(ctx context.Context, s store, slug string) (int, error
 // provisioned builds the Handle and injected env for an assigned DB index.
 func (d *driver) provisioned(wt accessory.WorktreeInfo, db int) accessory.Provisioned {
 	return accessory.Provisioned{
-		Handle: map[string]string{handleDB: strconv.Itoa(db), handleOwner: wt.Slug},
+		Handle: map[string]string{handleDB: strconv.Itoa(db), handleOwner: ownerID(wt)},
 		Env:    map[string]string{d.cfg.Inject: d.connURL(db)},
 	}
 }
@@ -234,7 +244,7 @@ func (r *redisStore) setOwnerNX(ctx context.Context, db int, owner string) (bool
 
 func (r *redisStore) owner(ctx context.Context, db int) (string, error) {
 	v, err := r.client(db).Get(ctx, ownerKey).Result()
-	if err == goredis.Nil {
+	if errors.Is(err, goredis.Nil) {
 		return "", nil
 	}
 	return v, err

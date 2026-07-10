@@ -320,7 +320,7 @@ func TestBuildLsEntries(t *testing.T) {
 		PortAssignments: map[string]int{},
 	}
 
-	entries := buildLsEntries(trees, serviceNames, st, testCfg, nil)
+	entries := buildLsEntries(trees, serviceNames, st, testCfg, false)
 
 	// bare worktree should be skipped: 2 trees × 2 services = 4
 	if len(entries) != 4 {
@@ -352,7 +352,7 @@ func TestBuildLsEntries_DetachedHead(t *testing.T) {
 		PortAssignments: map[string]int{},
 	}
 
-	entries := buildLsEntries(trees, serviceNames, st, testCfg, nil)
+	entries := buildLsEntries(trees, serviceNames, st, testCfg, false)
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(entries))
 	}
@@ -375,7 +375,7 @@ func TestBuildLsEntries_StaleProcess(t *testing.T) {
 		PortAssignments: map[string]int{},
 	}
 
-	entries := buildLsEntries(trees, serviceNames, st, testCfg, nil)
+	entries := buildLsEntries(trees, serviceNames, st, testCfg, false)
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(entries))
 	}

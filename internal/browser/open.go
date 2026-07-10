@@ -6,9 +6,14 @@ import (
 	"runtime"
 )
 
-// BuildURL constructs the proxy URL for a service.
-func BuildURL(scheme, slug string, proxyPort int) string {
-	return fmt.Sprintf("%s://%s.localhost:%d", scheme, slug, proxyPort)
+// BuildURL constructs the project-qualified proxy URL for a service, e.g.
+// "http://feature-auth.myapp.localhost:3000".
+func BuildURL(scheme, slug, project string, proxyPort int) string {
+	host := slug
+	if project != "" {
+		host += "." + project
+	}
+	return fmt.Sprintf("%s://%s.localhost:%d", scheme, host, proxyPort)
 }
 
 // Open opens the given URL in the default browser.

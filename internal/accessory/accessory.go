@@ -26,14 +26,15 @@ const OpTimeout = 10 * time.Minute
 // WorktreeInfo carries the per-worktree identity a driver needs to derive
 // resource names and connection strings.
 type WorktreeInfo struct {
-	Branch string // e.g. "feature/auth"
-	Slug   string // URL-safe slug, e.g. "feature-auth"
-	Path   string // absolute worktree path
+	Project string // repo's project name, namespaces cross-project resources
+	Branch  string // e.g. "feature/auth"
+	Slug    string // URL-safe slug, e.g. "feature-auth"
+	Path    string // absolute worktree path
 }
 
-// FromWorktree builds a WorktreeInfo from a git worktree.
-func FromWorktree(wt *git.Worktree) WorktreeInfo {
-	return WorktreeInfo{Branch: wt.Branch, Slug: wt.Slug(), Path: wt.Path}
+// FromWorktree builds a WorktreeInfo from a git worktree and its project name.
+func FromWorktree(wt *git.Worktree, project string) WorktreeInfo {
+	return WorktreeInfo{Project: project, Branch: wt.Branch, Slug: wt.Slug(), Path: wt.Path}
 }
 
 // Expand interpolates ${VAR} references in s using the worktree's identity

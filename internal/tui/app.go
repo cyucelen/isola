@@ -17,6 +17,7 @@ import (
 	"github.com/cyucelen/isola/internal/port"
 	"github.com/cyucelen/isola/internal/process"
 	"github.com/cyucelen/isola/internal/proxy"
+	"github.com/cyucelen/isola/internal/registry"
 	"github.com/cyucelen/isola/internal/state"
 )
 
@@ -114,16 +115,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case StatusUpdateMsg:
 		m.rows = msg.Rows
-		// Refresh proxy status from state.
-		if err := m.store.WithLock(func() error {
-			st, e := m.store.Load()
-			if e != nil {
-				return e
-			}
-			m.proxyRunning = st.Proxy.Status == state.StatusRunning && st.Proxy.PID > 0 && process.IsProcessRunning(st.Proxy.PID)
-			return nil
-		}); err != nil {
-			logging.Warn("failed to load proxy state: %v", err)
+		// Refresh proxy status from the machine-wide daemon.
+		if reg, err := registry.Open(); err != nil {
+			logging.Warn("proxy registry unavailable: %v", err)
+		} else if running, err := proxy.DaemonRunning(reg); err != nil {
+			logging.Warn("failed to load proxy daemon state: %v", err)
+		} else {
+			m.proxyRunning = running
 		}
 		if m.cursor >= len(m.rows) && len(m.rows) > 0 {
 			m.cursor = len(m.rows) - 1
@@ -321,18 +319,29 @@ func (m *Model) restartSelected() tea.Msg {
 }
 
 func (m *Model) toggleProxy() tea.Msg {
+	reg, err := registry.Open()
+	if err != nil {
+		return ActionResultMsg{Message: fmt.Sprintf("Proxy registry unavailable: %v", err), IsError: true}
+	}
 	if m.proxyRunning {
-		stopped, err := proxy.Stop(m.store)
+		stopped, err := proxy.StopDaemon(reg)
 		if err != nil {
 			return ActionResultMsg{Message: fmt.Sprintf("Proxy stop failed: %v", err), IsError: true}
 		}
 		if stopped {
-			return ActionResultMsg{Message: "Proxy stopped"}
+			return ActionResultMsg{Message: "Proxy stopped (machine-wide)"}
 		}
 		return ActionResultMsg{Message: "Proxy was not running"}
 	}
-	logDir := filepath.Join(m.store.Dir(), "logs")
-	started, err := proxy.EnsureRunning(m.store, m.repoRoot, logDir, m.cfg.Proxy.HTTPS)
+	if err := reg.Register(registry.Project{
+		Name:       m.cfg.Project,
+		StateDir:   m.store.Dir(),
+		ProxyPorts: m.cfg.ProxyPorts(),
+		HTTPS:      m.cfg.Proxy.HTTPS,
+	}); err != nil {
+		return ActionResultMsg{Message: fmt.Sprintf("Proxy register failed: %v", err), IsError: true}
+	}
+	started, err := proxy.EnsureDaemon(reg)
 	if err != nil {
 		return ActionResultMsg{Message: fmt.Sprintf("Proxy start failed: %v", err), IsError: true}
 	}
@@ -357,22 +366,13 @@ func (m *Model) openSelected() tea.Msg {
 		return ActionResultMsg{Message: "Unknown service", IsError: true}
 	}
 
-	// Determine scheme from proxy state.
+	// The scheme follows this project's proxy config.
 	scheme := "http"
-	if err := m.store.WithLock(func() error {
-		st, e := m.store.Load()
-		if e != nil {
-			return e
-		}
-		if st.Proxy.HTTPS {
-			scheme = "https"
-		}
-		return nil
-	}); err != nil {
-		logging.Warn("failed to load proxy state for scheme: %v", err)
+	if m.cfg.Proxy.HTTPS {
+		scheme = "https"
 	}
 
-	url := browser.BuildURL(scheme, row.Slug, svc.ProxyPort)
+	url := browser.BuildURL(scheme, row.Slug, m.cfg.Project, svc.ProxyPort)
 	if err := browser.Open(url); err != nil {
 		return ActionResultMsg{Message: fmt.Sprintf("Error opening browser: %v", err), IsError: true}
 	}

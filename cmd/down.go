@@ -13,6 +13,7 @@ import (
 	"github.com/cyucelen/isola/internal/logging"
 	"github.com/cyucelen/isola/internal/port"
 	"github.com/cyucelen/isola/internal/process"
+	"github.com/cyucelen/isola/internal/registry"
 	"github.com/cyucelen/isola/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -50,8 +51,8 @@ var downCmd = &cobra.Command{
 			}
 		}
 
-		registry := port.NewRegistry(store, cfg)
-		mgr := process.NewManager(cfg, store, registry)
+		portReg := port.NewRegistry(store, cfg)
+		mgr := process.NewManager(cfg, store, portReg)
 
 		var trees []git.Worktree
 		if downAll {
@@ -92,6 +93,17 @@ var downCmd = &cobra.Command{
 				logging.Info("✓ %d %s stopped", totalStopped, noun)
 			} else {
 				logging.Info("✓ %d %s stopped for %s", totalStopped, noun, trees[0].Branch)
+			}
+		}
+
+		// Taking the whole project down removes its shared-proxy registration so
+		// the daemon no longer advertises routes for it. The machine-wide daemon
+		// keeps running for other projects; stop it with `isola proxy stop`.
+		if downAll && downService == "" {
+			if reg, err := registry.Open(); err == nil {
+				if err := reg.Deregister(store.Dir()); err != nil {
+					logging.Warn("deregistering project from proxy: %v", err)
+				}
 			}
 		}
 

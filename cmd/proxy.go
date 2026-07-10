@@ -1,171 +1,67 @@
 package cmd
 
 import (
-	"crypto/tls"
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"sort"
 	"syscall"
 
-	"github.com/cyucelen/isola/internal/cert"
 	"github.com/cyucelen/isola/internal/logging"
 	"github.com/cyucelen/isola/internal/proxy"
-	"github.com/cyucelen/isola/internal/state"
+	"github.com/cyucelen/isola/internal/registry"
 	"github.com/spf13/cobra"
 )
 
 var proxyCmd = &cobra.Command{
 	Use:   "proxy",
-	Short: "Manage the reverse proxy",
-	Long:  "Start or stop the reverse proxy for subdomain-based routing.",
+	Short: "Manage the shared reverse proxy",
+	Long:  "Start or stop the machine-wide reverse proxy that routes <branch>.<project>.localhost to every registered project's services.",
 }
 
 var proxyStartCmd = &cobra.Command{
 	Use:   "start",
-	Short: "Start the reverse proxy",
-	Long: `Start the reverse proxy in the foreground.
+	Short: "Run the shared reverse proxy daemon (foreground)",
+	Long: `Run the machine-wide reverse proxy in the foreground.
 
-Launches HTTP listeners for each configured proxy_port, routing requests
-based on the Host header subdomain (e.g., feature-auth.localhost:3000).
-The proxy runs until interrupted with Ctrl+C (SIGINT) or SIGTERM.
-
-Use --https to enable HTTPS with auto-generated certificates, or
---cert and --key to provide your own certificate and key files.`,
+It binds the union of every registered project's proxy ports and routes each
+request by its <branch-slug>.<project>.localhost host to that project's backend,
+serving HTTPS on ports where any project enabled it. It runs until interrupted
+with Ctrl+C (SIGINT) or SIGTERM. 'isola up' normally starts it for you in the
+background.`,
+	// The daemon is machine-wide; it needs no repo or config of its own.
+	Annotations: map[string]string{"skipRepoDetection": "true"},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		stateDir := filepath.Join(stateRoot, ".isola")
-		store, err := state.NewFileStore(stateDir)
+		reg, err := registry.Open()
 		if err != nil {
-			return fmt.Errorf("creating state store: %w", err)
-		}
-
-		httpsFlag, _ := cmd.Flags().GetBool("https")
-		certFile, _ := cmd.Flags().GetString("cert")
-		keyFile, _ := cmd.Flags().GetString("key")
-
-		// Build TLS config if HTTPS is requested.
-		var tlsConfig *tls.Config
-		if httpsFlag || certFile != "" || keyFile != "" {
-			if (certFile != "") != (keyFile != "") {
-				return fmt.Errorf("--cert and --key must be specified together")
-			}
-
-			if certFile == "" {
-				// Auto-generate a dev CA, then mint a leaf certificate per TLS
-				// handshake keyed on the SNI host. This makes any
-				// <branch-slug>.localhost verify without a "*.localhost"
-				// wildcard, which strict TLS clients reject.
-				certDir := filepath.Join(stateDir, "certs")
-				paths, err := cert.EnsureCerts(certDir)
-				if err != nil {
-					return fmt.Errorf("generating certificates: %w", err)
-				}
-				getCert, err := cert.NewSNIGetCertificate(paths)
-				if err != nil {
-					return fmt.Errorf("initializing certificate minting: %w", err)
-				}
-				tlsConfig = &tls.Config{GetCertificate: getCert}
-				logging.Verbose("using auto-generated CA in %s (minting per-host certs)", certDir)
-			} else {
-				// Bring-your-own certificate and key.
-				keypair, err := tls.LoadX509KeyPair(certFile, keyFile)
-				if err != nil {
-					return fmt.Errorf("loading TLS certificate: %w", err)
-				}
-				tlsConfig = &tls.Config{
-					Certificates: []tls.Certificate{keypair},
-				}
-			}
-		}
-
-		resolver := proxy.NewResolver(cfg, store)
-		server := proxy.NewProxyServer(resolver, tlsConfig)
-
-		// Collect proxy ports.
-		proxyPorts := map[string]int{}
-		for name, svc := range cfg.Services {
-			proxyPorts[name] = svc.ProxyPort
-		}
-
-		if err := server.Start(proxyPorts); err != nil {
 			return err
 		}
-
-		// Update state.
-		isHTTPS := tlsConfig != nil
-		if err := store.WithLock(func() error {
-			st, e := store.Load()
-			if e != nil {
-				return e
-			}
-			st.Proxy = state.ProxyState{
-				PID:    os.Getpid(),
-				Status: state.StatusRunning,
-				HTTPS:  isHTTPS,
-			}
-			return store.Save(st)
-		}); err != nil {
-			logging.Warn("failed to save proxy state: %v", err)
+		if err := reg.SetDaemon(registry.Daemon{PID: os.Getpid(), Running: true}); err != nil {
+			return fmt.Errorf("recording daemon state: %w", err)
 		}
+		defer func() { _ = reg.SetDaemon(registry.Daemon{}) }()
 
-		scheme := server.Scheme()
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
 
-		fmt.Println("Proxy started:")
-		// Sort for consistent output.
-		names := make([]string, 0, len(proxyPorts))
-		for name := range proxyPorts {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		for _, name := range names {
-			fmt.Printf("  :%d → %s services\n", proxyPorts[name], name)
-		}
-
-		fmt.Println("\nAccess your services at:")
-		fmt.Printf("  %s://<branch-slug>.localhost:<proxy_port>\n", scheme)
-
-		// Wait for interrupt.
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-		<-sig
-
-		fmt.Println("\nStopping proxy...")
-		if err := server.Stop(); err != nil {
-			logging.Warn("error stopping proxy server: %v", err)
-		}
-
-		if err := store.WithLock(func() error {
-			st, e := store.Load()
-			if e != nil {
-				return e
-			}
-			st.Proxy = state.ProxyState{Status: state.StatusStopped}
-			return store.Save(st)
-		}); err != nil {
-			logging.Warn("failed to update proxy state: %v", err)
-		}
-
-		fmt.Println("Proxy stopped.")
-		return nil
+		logging.Info("isola proxy: routing <branch>.<project>.localhost for all registered projects (Ctrl+C to stop)")
+		return proxy.NewDaemon(reg).Serve(ctx)
 	},
 }
 
 var proxyStopCmd = &cobra.Command{
 	Use:   "stop",
-	Short: "Stop the reverse proxy",
-	Long: `Stop a running reverse proxy process.
+	Short: "Stop the shared reverse proxy daemon",
+	Long: `Stop the machine-wide reverse proxy.
 
-Sends SIGTERM to the proxy process recorded in the state file
-and updates the state to stopped.`,
+This affects every project on this machine, not just the current repo.`,
+	Annotations: map[string]string{"skipRepoDetection": "true"},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		stateDir := filepath.Join(stateRoot, ".isola")
-		store, err := state.NewFileStore(stateDir)
+		reg, err := registry.Open()
 		if err != nil {
-			return fmt.Errorf("creating state store: %w", err)
+			return err
 		}
-
-		stopped, err := proxy.Stop(store)
+		stopped, err := proxy.StopDaemon(reg)
 		if err != nil {
 			return fmt.Errorf("stopping proxy: %w", err)
 		}
@@ -174,16 +70,11 @@ and updates the state to stopped.`,
 		} else {
 			fmt.Println("Proxy is not running.")
 		}
-
 		return nil
 	},
 }
 
 func init() {
-	proxyStartCmd.Flags().Bool("https", false, "Enable HTTPS with auto-generated certificates")
-	proxyStartCmd.Flags().String("cert", "", "Path to TLS certificate file")
-	proxyStartCmd.Flags().String("key", "", "Path to TLS private key file")
-
 	proxyCmd.AddCommand(proxyStartCmd)
 	proxyCmd.AddCommand(proxyStopCmd)
 	rootCmd.AddCommand(proxyCmd)

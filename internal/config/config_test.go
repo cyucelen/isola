@@ -524,3 +524,27 @@ proxy_port = 3000
 		}
 	})
 }
+
+func TestProjectNameDefaultAndOverride(t *testing.T) {
+	c := &Config{}
+	if got := c.ProjectName("/home/me/My App"); got != "my-app" {
+		t.Errorf("default project = %q, want %q", got, "my-app")
+	}
+	c.Project = "custom"
+	if got := c.ProjectName("/anything"); got != "custom" {
+		t.Errorf("override project = %q, want %q", got, "custom")
+	}
+}
+
+func TestIsValidLabel(t *testing.T) {
+	for _, s := range []string{"app", "my-app", "a", "app123"} {
+		if !isValidLabel(s) {
+			t.Errorf("isValidLabel(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"", "-app", "app-", "App", "my_app", "a.b"} {
+		if isValidLabel(s) {
+			t.Errorf("isValidLabel(%q) = true, want false", s)
+		}
+	}
+}

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -28,18 +29,31 @@ func (f *fakeConn) exec(ctx context.Context, sql string) (string, error) {
 
 func (f *fakeConn) close(ctx context.Context) {}
 
+// cfgLoader returns a config loader (matching New's decode signature) that
+// copies cfg into the *pgConfig target.
+func cfgLoader(cfg pgConfig) func(interface{}) error {
+	return func(v interface{}) error {
+		p, ok := v.(*pgConfig)
+		if !ok {
+			return fmt.Errorf("config target is %T, want *pgConfig", v)
+		}
+		*p = cfg
+		return nil
+	}
+}
+
 // newTestDriver builds a driver whose connections are fakes recording SQL into
 // the returned slice. existsRe controls which db the existence check reports.
 func newTestDriver(t *testing.T, cfg pgConfig, existsRe string) (*driver, *[]string) {
 	t.Helper()
-	d, err := New("primary", func(v interface{}) error {
-		*(v.(*pgConfig)) = cfg
-		return nil
-	})
+	d, err := New("primary", cfgLoader(cfg))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	dr := d.(*driver)
+	dr, ok := d.(*driver)
+	if !ok {
+		t.Fatalf("New returned %T, want *driver", d)
+	}
 	calls := &[]string{}
 	dr.open = func(ctx context.Context, connURL string) (conn, error) {
 		return &fakeConn{calls: calls, existsRe: existsRe}, nil
@@ -75,7 +89,7 @@ func TestNewValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := baseCfg
 			tt.mut(&c)
-			_, err := New("primary", func(v interface{}) error { *(v.(*pgConfig)) = c; return nil })
+			_, err := New("primary", cfgLoader(c))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want %q", err, tt.want)
 			}
@@ -87,7 +101,7 @@ func TestNewAllowsDSNWithURLOverride(t *testing.T) {
 	c := baseCfg
 	c.ServerURL = "host=localhost port=5432 dbname=postgres"
 	c.URL = "postgres://app:app@localhost:5432/${db}"
-	if _, err := New("primary", func(v interface{}) error { *(v.(*pgConfig)) = c; return nil }); err != nil {
+	if _, err := New("primary", cfgLoader(c)); err != nil {
 		t.Fatalf("DSN server_url with url override should be allowed: %v", err)
 	}
 }

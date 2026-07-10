@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -21,6 +22,7 @@ type RunnerConfig struct {
 	ServiceName string
 	Branch      string
 	BranchSlug  string
+	Project     string // project name, for project-qualified sibling URLs
 	Command     string
 	Dir         string // absolute working directory
 	Port        int
@@ -201,14 +203,19 @@ func IsProcessRunning(pid int) bool {
 	return err == nil
 }
 
-// IsPortAvailable checks if a TCP port is available for binding.
+// IsPortAvailable reports whether a TCP port is free to use. It treats a port as
+// taken if any server is accepting connections on it via loopback (IPv4 or
+// IPv6), detected by dialing rather than binding: a bind-based check is defeated
+// by SO_REUSEADDR and address family, so a backend already held on 0.0.0.0 or
+// [::] (e.g. another isola project's service) would be missed.
 func IsPortAvailable(port int) bool {
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return false
+	for _, host := range []string{"127.0.0.1", "::1"} {
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 200*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return false
+		}
 	}
-	_ = ln.Close()
 	return true
 }
 
@@ -231,8 +238,12 @@ func (r *Runner) buildEnv() []string {
 	for svcName, svcPort := range r.config.AllServicePorts {
 		injected["ISOLA_"+strings.ToUpper(svcName)+"_PORT"] = fmt.Sprintf("%d", svcPort)
 	}
+	host := r.config.BranchSlug
+	if r.config.Project != "" {
+		host += "." + r.config.Project // project-qualified for the shared proxy
+	}
 	for svcName, proxyPort := range r.config.AllServiceProxyPorts {
-		injected["ISOLA_"+strings.ToUpper(svcName)+"_URL"] = fmt.Sprintf("%s://%s.localhost:%d", scheme, r.config.BranchSlug, proxyPort)
+		injected["ISOLA_"+strings.ToUpper(svcName)+"_URL"] = fmt.Sprintf("%s://%s.localhost:%d", scheme, host, proxyPort)
 	}
 
 	// Expand ${VAR} references in config env values against the injected vars,

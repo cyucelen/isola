@@ -2,12 +2,26 @@ package redis
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/cyucelen/isola/internal/accessory"
 )
+
+// cfgLoader returns a config loader (matching New's decode signature) that
+// copies cfg into the *rdConfig target.
+func cfgLoader(cfg rdConfig) func(interface{}) error {
+	return func(v interface{}) error {
+		p, ok := v.(*rdConfig)
+		if !ok {
+			return fmt.Errorf("config target is %T, want *rdConfig", v)
+		}
+		*p = cfg
+		return nil
+	}
+}
 
 // fakeStore simulates per-DB owner markers in memory.
 type fakeStore struct {
@@ -38,11 +52,14 @@ func (f *fakeStore) close() error { return nil }
 
 func newTestDriver(t *testing.T, cfg rdConfig, s store) *driver {
 	t.Helper()
-	d, err := New("cache", func(v interface{}) error { *(v.(*rdConfig)) = cfg; return nil })
+	d, err := New("cache", cfgLoader(cfg))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	dr := d.(*driver)
+	dr, ok := d.(*driver)
+	if !ok {
+		t.Fatalf("New returned %T, want *driver", d)
+	}
 	dr.open = func(string) (store, error) { return s, nil }
 	return dr
 }
@@ -65,7 +82,7 @@ func TestNewValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := baseCfg
 			tt.mut(&c)
-			_, err := New("cache", func(v interface{}) error { *(v.(*rdConfig)) = c; return nil })
+			_, err := New("cache", cfgLoader(c))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want %q", err, tt.want)
 			}
@@ -192,4 +209,13 @@ func mustAtoi(t *testing.T, s string) int {
 		t.Fatalf("atoi(%q): %v", s, err)
 	}
 	return n
+}
+
+func TestOwnerIDQualifiesByProject(t *testing.T) {
+	if got := ownerID(accessory.WorktreeInfo{Project: "projA", Slug: "main"}); got != "projA:main" {
+		t.Errorf("ownerID = %q, want projA:main", got)
+	}
+	if got := ownerID(accessory.WorktreeInfo{Slug: "main"}); got != "main" {
+		t.Errorf("ownerID (no project) = %q, want main", got)
+	}
 }

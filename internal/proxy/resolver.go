@@ -65,52 +65,26 @@ func (r *Resolver) Resolve(slug string, proxyPort int) (int, error) {
 	return port, nil
 }
 
-// AvailableSlugs returns all known branch slugs.
-func (r *Resolver) AvailableSlugs() ([]string, error) {
-	var slugs []string
-
-	if err := r.store.WithLock(func() error {
-		st, e := r.store.Load()
-		if e != nil {
-			return e
-		}
-		seen := map[string]bool{}
-		for key := range st.PortAssignments {
-			parts := strings.SplitN(key, ":", 2)
-			if len(parts) == 2 {
-				slug := git.BranchSlug(parts[0])
-				if !seen[slug] {
-					seen[slug] = true
-					slugs = append(slugs, slug)
-				}
-			}
-		}
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-
-	return slugs, nil
-}
-
-// ParseSlugFromHost extracts the slug from a Host header value.
-// "feature-auth.localhost:3000" -> "feature-auth"
-// "localhost:3000" -> ""
-func ParseSlugFromHost(host string) string {
-	// Remove port.
+// ParseHost splits a Host header into slug and project for the qualified scheme
+// "<slug>.<project>.localhost[:port]". A bare "<slug>.localhost" yields an empty
+// project; "localhost" (or a non-.localhost host) yields both empty. Slugs and
+// project names are single DNS labels, so the label before ".localhost" is the
+// project and the one before that is the slug.
+func ParseHost(host string) (slug, project string) {
 	h := host
 	if idx := strings.LastIndex(h, ":"); idx != -1 {
 		h = h[:idx]
 	}
-
-	// Check for .localhost suffix.
 	if !strings.HasSuffix(h, ".localhost") {
-		return ""
+		return "", ""
 	}
-
-	slug := strings.TrimSuffix(h, ".localhost")
-	if slug == "" {
-		return ""
+	rest := strings.TrimSuffix(h, ".localhost")
+	if rest == "" {
+		return "", ""
 	}
-	return slug
+	labels := strings.Split(rest, ".")
+	if len(labels) == 1 {
+		return labels[0], "" // bare <slug>.localhost
+	}
+	return strings.Join(labels[:len(labels)-1], "."), labels[len(labels)-1]
 }

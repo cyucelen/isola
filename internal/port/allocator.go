@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 	"net"
 	"strconv"
+	"time"
 
 	"github.com/cyucelen/isola/internal/config"
 )
@@ -49,13 +50,26 @@ func hashPort(branch, service string, minPort, maxPort int) int {
 // mitigated by (1) the file-level lock in state.FileStore serializing port
 // allocation across concurrent isola invocations, and (2) a clear error
 // message when the service fails to bind its assigned port.
-// We check on 127.0.0.1 to match the proxy bind address, though services may
-// listen on 0.0.0.0. In practice the file lock prevents concurrent conflicts.
+//
+// A port is free if nothing is currently listening on it. We detect a listener
+// by dialing loopback on both IPv4 and IPv6, rather than trying to bind: a
+// bind-based check is defeated by SO_REUSEADDR (a wildcard bind can coexist with
+// a loopback-specific one) and by address family, so it would hand the same
+// port to two projects. Dialing is also exactly what the proxy does to reach a
+// backend, so "reachable" is the property that matters.
 func isPortFree(port int) bool {
-	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
-	if err != nil {
-		return false
+	return !portListening(port)
+}
+
+// portListening reports whether a server is accepting connections on the port
+// via loopback (IPv4 or IPv6).
+func portListening(port int) bool {
+	for _, host := range []string{"127.0.0.1", "::1"} {
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 200*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return true
+		}
 	}
-	_ = ln.Close()
-	return true
+	return false
 }

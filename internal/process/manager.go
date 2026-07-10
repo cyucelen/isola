@@ -109,19 +109,11 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 		proxyPorts[svcName] = svc.ProxyPort
 	}
 
-	// Determine proxy scheme from state.
+	// The scheme for ISOLA_<SVC>_URL follows this project's proxy config; the
+	// shared daemon serves the project's ports over that scheme.
 	proxyScheme := "http"
-	if err := m.store.WithLock(func() error {
-		st, e := m.store.Load()
-		if e != nil {
-			return e
-		}
-		if st.Proxy.HTTPS {
-			proxyScheme = "https"
-		}
-		return nil
-	}); err != nil {
-		logging.Warn("failed to load proxy state for scheme: %v", err)
+	if m.cfg.Proxy.HTTPS {
+		proxyScheme = "https"
 	}
 
 	slug := tree.Slug()
@@ -185,6 +177,7 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 			ServiceName:          svcName,
 			Branch:               tree.Branch,
 			BranchSlug:           slug,
+			Project:              m.cfg.Project,
 			Command:              command,
 			Dir:                  dir,
 			Port:                 p,
@@ -253,7 +246,7 @@ func (m *Manager) provisionAccessories(tree *git.Worktree) map[string]string {
 	}
 	sort.Strings(names)
 
-	wt := accessory.FromWorktree(tree)
+	wt := accessory.FromWorktree(tree, m.cfg.Project)
 
 	complete := true
 	for _, name := range names {

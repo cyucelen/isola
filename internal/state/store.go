@@ -28,13 +28,6 @@ type ServiceState struct {
 	StartedAt string `json:"started_at"`
 }
 
-// ProxyState represents the runtime state of the reverse proxy.
-type ProxyState struct {
-	PID    int    `json:"pid"`
-	Status string `json:"status"`
-	HTTPS  bool   `json:"https,omitempty"`
-}
-
 // AccessoryState records a per-worktree resource isola provisioned (e.g. a
 // database), so teardown knows exactly what it created and may drop. Handle is
 // the driver's opaque record (e.g. {"database": "myapp_x"}) passed back to Drop.
@@ -48,7 +41,6 @@ type AccessoryState struct {
 type State struct {
 	// Services maps branch -> service name -> ServiceState.
 	Services map[string]map[string]*ServiceState `json:"services"`
-	Proxy    ProxyState                          `json:"proxy"`
 	// PortAssignments maps "branch:service" -> port.
 	PortAssignments map[string]int `json:"port_assignments"`
 	// Accessories maps branch -> accessory name -> AccessoryState.

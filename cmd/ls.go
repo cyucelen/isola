@@ -12,6 +12,8 @@ import (
 	"github.com/cyucelen/isola/internal/git"
 	"github.com/cyucelen/isola/internal/logging"
 	"github.com/cyucelen/isola/internal/process"
+	"github.com/cyucelen/isola/internal/proxy"
+	"github.com/cyucelen/isola/internal/registry"
 	"github.com/cyucelen/isola/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -75,7 +77,12 @@ Use --json to output the result as a JSON array for scripting and automation.`,
 		}
 		sort.Strings(serviceNames)
 
-		entries := buildLsEntries(trees, serviceNames, st, cfg, &st.Proxy)
+		// Proxy status comes from the shared machine-wide daemon, not repo state.
+		daemonRunning := false
+		if reg, err := registry.Open(); err == nil {
+			daemonRunning, _ = proxy.DaemonRunning(reg)
+		}
+		entries := buildLsEntries(trees, serviceNames, st, cfg, daemonRunning)
 
 		// Detect orphaned branches: in state but not in worktree list.
 		activeBranches := make(map[string]bool, len(trees))
@@ -105,11 +112,10 @@ Use --json to output the result as a JSON array for scripting and automation.`,
 	},
 }
 
-func buildLsEntries(trees []git.Worktree, serviceNames []string, st *state.State, c *config.Config, proxy *state.ProxyState) []lsEntry {
-	// Determine proxy scheme and whether proxy is available.
-	proxyRunning := proxy != nil && proxy.Status == state.StatusRunning && proxy.PID > 0
+func buildLsEntries(trees []git.Worktree, serviceNames []string, st *state.State, c *config.Config, proxyRunning bool) []lsEntry {
+	// The scheme follows this project's proxy config.
 	scheme := "http"
-	if proxy != nil && proxy.HTTPS {
+	if c != nil && c.Proxy.HTTPS {
 		scheme = "https"
 	}
 
@@ -146,10 +152,10 @@ func buildLsEntries(trees []git.Worktree, serviceNames []string, st *state.State
 				}
 			}
 
-			// Build URLs.
+			// Build URLs (project-qualified for the shared proxy).
 			if proxyRunning && c != nil {
 				if svc, ok := c.Services[svcName]; ok {
-					e.URL = fmt.Sprintf("%s://%s.localhost:%d", scheme, slug, svc.ProxyPort)
+					e.URL = fmt.Sprintf("%s://%s.%s.localhost:%d", scheme, slug, c.Project, svc.ProxyPort)
 				}
 			}
 			if e.Port > 0 {

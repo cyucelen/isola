@@ -114,7 +114,7 @@ func TestUpsertEnvReplacesAndAppends(t *testing.T) {
 	write(t, p, "# db config\nDATABASE_URL=postgres://main/db\nNODE_ENV=development\n")
 
 	changed, err := UpsertEnv(p, map[string]string{
-		"DATABASE_URL": "postgres://iso/feature", // existing -> replaced
+		"DATABASE_URL": "postgres://iso/feature",   // existing -> replaced
 		"REDIS_URL":    "redis://localhost:6379/2", // absent -> appended
 	})
 	if err != nil {
