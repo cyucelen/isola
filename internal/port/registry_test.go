@@ -23,7 +23,6 @@ func newTestRegistry(t *testing.T) *Registry {
 				ProxyPort: 3000,
 			},
 		},
-		Env:       map[string]string{},
 		Worktrees: map[string]config.WTOverride{},
 	}
 

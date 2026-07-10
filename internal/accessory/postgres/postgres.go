@@ -35,8 +35,7 @@ type pgConfig struct {
 	ServerURL string `toml:"server_url"` // existing server + maintenance db, for CREATE/DROP
 	CloneFrom string `toml:"clone_from"` // seeded source database copied per worktree
 	Name      string `toml:"name"`       // per-worktree db name; supports ${VAR}
-	Inject    string `toml:"inject"`     // env var injected into services
-	URL       string `toml:"url"`        // optional injected connection-string override; supports ${db}
+	URL       string `toml:"url"`        // optional connection-string override; supports ${db}
 }
 
 // conn is a live connection for the duration of one driver operation. It is a
@@ -72,9 +71,6 @@ func New(name string, dec accessory.Decoder) (accessory.Accessory, error) {
 	}
 	if c.Name == "" {
 		return nil, errors.New("name is required")
-	}
-	if c.Inject == "" {
-		return nil, errors.New("inject is required")
 	}
 	// clone_from is interpolated into DDL just like the per-worktree name, so
 	// hold it to the same identifier rules (fail fast on bad config).
@@ -186,11 +182,11 @@ func (d *driver) Drop(ctx context.Context, handle map[string]string) error {
 	return d.dropDatabase(ctx, c, dbName)
 }
 
-// provisioned assembles the Handle and injected env for a resolved database name.
+// provisioned assembles the Handle and exposed URL for a resolved database name.
 func (d *driver) provisioned(wt accessory.WorktreeInfo, dbName string) accessory.Provisioned {
 	return accessory.Provisioned{
 		Handle: map[string]string{handleDatabase: dbName},
-		Env:    map[string]string{d.cfg.Inject: d.connURL(wt, dbName)},
+		URL:    d.connURL(wt, dbName),
 	}
 }
 

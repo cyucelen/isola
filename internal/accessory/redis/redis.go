@@ -35,7 +35,6 @@ const (
 // rdConfig is the driver-owned config schema for [accessories.<name>].
 type rdConfig struct {
 	ServerURL string `toml:"server_url"` // existing Redis server, e.g. redis://localhost:6379
-	Inject    string `toml:"inject"`     // env var injected into services (e.g. REDIS_URL)
 	Databases int    `toml:"databases"`  // logical DBs to allocate across (default 16; set to match your server)
 }
 
@@ -73,9 +72,6 @@ func New(name string, dec accessory.Decoder) (accessory.Accessory, error) {
 	}
 	if c.ServerURL == "" {
 		return nil, errors.New("server_url is required")
-	}
-	if c.Inject == "" {
-		return nil, errors.New("inject is required")
 	}
 	if _, err := goredis.ParseURL(c.ServerURL); err != nil {
 		return nil, fmt.Errorf("server_url is not a valid redis URL: %w", err)
@@ -196,7 +192,7 @@ func (d *driver) allocate(ctx context.Context, s store, slug string) (int, error
 func (d *driver) provisioned(wt accessory.WorktreeInfo, db int) accessory.Provisioned {
 	return accessory.Provisioned{
 		Handle: map[string]string{handleDB: strconv.Itoa(db), handleOwner: ownerID(wt)},
-		Env:    map[string]string{d.cfg.Inject: d.connURL(db)},
+		URL:    d.connURL(db),
 	}
 }
 

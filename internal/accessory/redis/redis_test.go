@@ -64,7 +64,7 @@ func newTestDriver(t *testing.T, cfg rdConfig, s store) *driver {
 	return dr
 }
 
-var baseCfg = rdConfig{ServerURL: "redis://localhost:6379", Inject: "REDIS_URL"}
+var baseCfg = rdConfig{ServerURL: "redis://localhost:6379"}
 
 var wt = accessory.WorktreeInfo{Branch: "feature/auth", Slug: "feature-auth"}
 
@@ -75,7 +75,6 @@ func TestNewValidation(t *testing.T) {
 		want string
 	}{
 		{"missing server_url", func(c *rdConfig) { c.ServerURL = "" }, "server_url is required"},
-		{"missing inject", func(c *rdConfig) { c.Inject = "" }, "inject is required"},
 		{"bad server_url", func(c *rdConfig) { c.ServerURL = "http://not-redis" }, "not a valid redis URL"},
 	}
 	for _, tt := range tests {
@@ -106,8 +105,8 @@ func TestProvisionAllocatesAndInjects(t *testing.T) {
 		t.Errorf("Handle owner = %q", got.Handle["owner"])
 	}
 	want := "redis://localhost:6379/" + db
-	if got.Env["REDIS_URL"] != want {
-		t.Errorf("REDIS_URL = %q, want %q", got.Env["REDIS_URL"], want)
+	if got.URL != want {
+		t.Errorf("REDIS_URL = %q, want %q", got.URL, want)
 	}
 	if s.owners[mustAtoi(t, db)] != "feature-auth" {
 		t.Errorf("owner marker not set for db %s", db)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,24 +21,18 @@ import (
 func init() {
 	accessory.Register("faketest", func(name string, dec accessory.Decoder) (accessory.Accessory, error) {
 		var c struct {
-			Fail   bool   `toml:"fail"`
-			Inject string `toml:"inject"`
+			Fail bool `toml:"fail"`
 		}
 		if err := dec(&c); err != nil {
 			return nil, err
 		}
-		inject := c.Inject
-		if inject == "" {
-			inject = "DATABASE_URL"
-		}
-		return &fakeAccessory{name: name, fail: c.Fail, inject: inject}, nil
+		return &fakeAccessory{name: name, fail: c.Fail}, nil
 	})
 }
 
 type fakeAccessory struct {
-	name   string
-	inject string
-	fail   bool
+	name string
+	fail bool
 }
 
 func (f *fakeAccessory) Name() string { return f.name }
@@ -48,7 +43,7 @@ func (f *fakeAccessory) Provision(_ context.Context, wt accessory.WorktreeInfo) 
 	}
 	return accessory.Provisioned{
 		Handle: map[string]string{"id": "res-" + wt.Slug},
-		Env:    map[string]string{f.inject: "fake://" + wt.Slug},
+		URL:    "fake://" + wt.Slug,
 	}, nil
 }
 func (f *fakeAccessory) Reset(ctx context.Context, wt accessory.WorktreeInfo) (accessory.Provisioned, error) {
@@ -88,8 +83,8 @@ inject = "DATABASE_URL"
 	tree := &git.Worktree{Path: t.TempDir(), Branch: "feature/auth"}
 
 	env := mgr.provisionAccessories(tree)
-	if env["DATABASE_URL"] != "fake://feature-auth" {
-		t.Errorf("injected env = %v", env)
+	if env["db"] != "fake://feature-auth" {
+		t.Errorf("accessory URL by name = %v", env)
 	}
 
 	// The provisioned resource must be recorded in state.
@@ -152,6 +147,49 @@ fail = true
 	st, _ := store.Load()
 	if ss := state.GetServiceState(st, "main", "web"); ss == nil || ss.Status != state.StatusRunning {
 		t.Errorf("web should be recorded running, got %+v", ss)
+	}
+}
+
+func TestStartServicesReportsImmediateExit(t *testing.T) {
+	mgr, store := managerWithConfig(t, `
+[services.web]
+command = "true"
+port_range = { min = 19100, max = 19199 }
+proxy_port = 3000
+`)
+	tree := &git.Worktree{Path: t.TempDir(), Branch: "main"}
+
+	results := mgr.StartServices(tree, "")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Err == nil || !strings.Contains(results[0].Err.Error(), "exited immediately") {
+		t.Errorf("a command that exits at once must be reported as failed, got err: %v", results[0].Err)
+	}
+	// It must not be recorded as running.
+	st, _ := store.Load()
+	if ss := state.GetServiceState(st, "main", "web"); ss != nil && ss.Status == state.StatusRunning {
+		t.Errorf("a service that exited must not be recorded running, got %+v", ss)
+	}
+}
+
+func TestStartServicesReportsMissingDir(t *testing.T) {
+	mgr, _ := managerWithConfig(t, `
+[services.web]
+command = "sleep 60"
+dir = "does-not-exist"
+port_range = { min = 19100, max = 19199 }
+proxy_port = 3000
+`)
+	tree := &git.Worktree{Path: t.TempDir(), Branch: "main"}
+	defer mgr.StopServices(tree, "")
+
+	results := mgr.StartServices(tree, "")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Err == nil || !strings.Contains(results[0].Err.Error(), "does not exist") {
+		t.Errorf("a missing service dir must be reported clearly, got err: %v", results[0].Err)
 	}
 }
 
@@ -243,7 +281,6 @@ func newTestManager(t *testing.T) (*Manager, *state.FileStore) {
 				ProxyPort: 3000,
 			},
 		},
-		Env:       map[string]string{},
 		Worktrees: map[string]config.WTOverride{},
 	}
 
@@ -354,7 +391,6 @@ func TestManagerCleanStale(t *testing.T) {
 				ProxyPort: 3000,
 			},
 		},
-		Env:       map[string]string{},
 		Worktrees: map[string]config.WTOverride{},
 	}
 

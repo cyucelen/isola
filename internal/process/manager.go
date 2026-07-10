@@ -3,19 +3,28 @@ package process
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cyucelen/isola/internal/accessory"
+	"github.com/cyucelen/isola/internal/cert"
 	"github.com/cyucelen/isola/internal/config"
 	"github.com/cyucelen/isola/internal/copyfiles"
 	"github.com/cyucelen/isola/internal/git"
 	"github.com/cyucelen/isola/internal/logging"
 	"github.com/cyucelen/isola/internal/port"
+	"github.com/cyucelen/isola/internal/registry"
 	"github.com/cyucelen/isola/internal/state"
 )
+
+// startGrace is how long StartServices waits after spawning a service before
+// declaring it started, so a command that exits immediately (bad command,
+// missing binary, wrong dir) is reported as a failure rather than a false "✓".
+const startGrace = 400 * time.Millisecond
 
 // Manager coordinates starting and stopping services across worktrees.
 type Manager struct {
@@ -24,34 +33,34 @@ type Manager struct {
 	registry *port.Registry
 	mu       sync.RWMutex
 	runners  map[string]*Runner // key: "branch:service"
-	// accessoryEnv caches the injected env of a branch's accessories once they
-	// have been successfully provisioned in this Manager's lifetime, so repeated
-	// StartServices calls (e.g. per-service restarts from the TUI) don't
-	// re-provision — a CLI `up` gets one Manager per run, the TUI one per session.
-	accessoryEnv map[string]map[string]string // branch -> injected env
+	// accessoryURLs caches a branch's accessory name -> URL once successfully
+	// provisioned in this Manager's lifetime, so repeated StartServices calls
+	// (e.g. per-service restarts from the TUI) don't re-provision — a CLI `up`
+	// gets one Manager per run, the TUI one per session.
+	accessoryURLs map[string]map[string]string // branch -> accessory name -> URL
 }
 
 // NewManager creates a new process Manager.
 func NewManager(cfg *config.Config, store *state.FileStore, registry *port.Registry) *Manager {
 	return &Manager{
-		cfg:          cfg,
-		store:        store,
-		registry:     registry,
-		runners:      map[string]*Runner{},
-		accessoryEnv: map[string]map[string]string{},
+		cfg:           cfg,
+		store:         store,
+		registry:      registry,
+		runners:       map[string]*Runner{},
+		accessoryURLs: map[string]map[string]string{},
 	}
 }
 
 func (m *Manager) cachedAccessoryEnv(branch string) (map[string]string, bool) {
 	m.mu.RLock()
-	env, ok := m.accessoryEnv[branch]
+	env, ok := m.accessoryURLs[branch]
 	m.mu.RUnlock()
 	return env, ok
 }
 
 func (m *Manager) cacheAccessoryEnv(branch string, env map[string]string) {
 	m.mu.Lock()
-	m.accessoryEnv[branch] = env
+	m.accessoryURLs[branch] = env
 	m.mu.Unlock()
 }
 
@@ -81,6 +90,9 @@ type ServiceResult struct {
 	Port    int
 	PID     int
 	Err     error
+	// AlreadyRunning is true when start was a no-op because the service was
+	// already running (a live PID in state). Not an error, not a fresh start.
+	AlreadyRunning bool
 }
 
 // StartServices starts services for the given worktree.
@@ -112,8 +124,10 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 	// The scheme for ISOLA_<SVC>_URL follows this project's proxy config; the
 	// shared daemon serves the project's ports over that scheme.
 	proxyScheme := "http"
+	caCertPath := ""
 	if m.cfg.Proxy.HTTPS {
 		proxyScheme = "https"
+		caCertPath = m.ensureCACert()
 	}
 
 	slug := tree.Slug()
@@ -122,18 +136,7 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 	// they inject. A failed accessory only warns and is skipped; services still
 	// start (without that accessory's env), so a down dependency never blocks
 	// working on the rest of the worktree.
-	accEnv := m.provisionAccessories(tree)
-
-	// Write the accessory URLs into the worktree's .env (if it has one) so tools
-	// that read .env directly, not just the process environment, see this
-	// worktree's isolated database/cache. Only these keys are touched.
-	if len(accEnv) > 0 {
-		if changed, err := copyfiles.UpsertEnv(filepath.Join(tree.Path, ".env"), accEnv); err != nil {
-			logging.Warn("updating .env for %s: %v", tree.Branch, err)
-		} else if len(changed) > 0 {
-			logging.Info("Set %s in .env for %s", strings.Join(changed, ", "), tree.Branch)
-		}
-	}
+	acc := m.provisionAccessories(tree)
 
 	for _, svcName := range services {
 		p, ok := portMap[svcName]
@@ -141,10 +144,21 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 			continue // port allocation failed, already reported
 		}
 
-		// Clean up stale processes.
+		// Clean up stale processes (dead PIDs recorded as running).
 		m.cleanStale(tree.Branch, svcName)
 
-		// Check if port is available. If not, the port might be held by an orphan process.
+		// If the service is already running, starting again is a no-op: report it
+		// as already-up rather than the spurious "port in use" error that a naive
+		// availability check would raise against the service's own process.
+		if pid := m.runningPID(tree.Branch, svcName); pid > 0 {
+			results = append(results, ServiceResult{
+				Branch: tree.Branch, Service: svcName, Port: p, PID: pid, AlreadyRunning: true,
+			})
+			continue
+		}
+
+		// Check if port is available. If not, the port is held by a foreign
+		// process (an orphan, or something outside isola).
 		if !IsPortAvailable(p) {
 			results = append(results, ServiceResult{
 				Branch: tree.Branch, Service: svcName, Port: p,
@@ -173,6 +187,16 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 			continue
 		}
 
+		// The directory must exist, or `sh -c` fails with a confusing
+		// "fork/exec /bin/sh: no such file or directory" that blames the shell.
+		if info, statErr := os.Stat(cleanDir); statErr != nil || !info.IsDir() {
+			results = append(results, ServiceResult{
+				Branch: tree.Branch, Service: svcName,
+				Err: fmt.Errorf("dir %q does not exist (relative to the worktree root)", svc.Dir),
+			})
+			continue
+		}
+
 		runner := NewRunner(RunnerConfig{
 			ServiceName:          svcName,
 			Branch:               tree.Branch,
@@ -182,14 +206,30 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 			Dir:                  dir,
 			Port:                 p,
 			Env:                  env,
-			InjectedEnv:          accEnv,
+			AccessoriesByName:    acc,
 			LogDir:               filepath.Join(m.store.Dir(), "logs"),
 			AllServicePorts:      portMap,
 			AllServiceProxyPorts: proxyPorts,
 			ProxyScheme:          proxyScheme,
+			CACertPath:           caCertPath,
 		})
 
+		// Write the service's resolved env into its env file (accessory URLs,
+		// ${...} refs, [env]) so tools that read the file directly, not just the
+		// process environment, see this worktree's isolated values.
+		m.writeEnvFile(tree, svcName, dir, cleanRoot, runner.FileEnv())
+
 		pid, err := runner.Start()
+		if err == nil {
+			// Don't claim success for a service that dies on startup: wait a
+			// short grace and, if the process is already gone, report a failure
+			// pointing at the logs instead of a false "✓ started".
+			select {
+			case <-runner.Done():
+				err = fmt.Errorf("%s exited immediately; check `isola logs %s`", svcName, tree.Branch)
+			case <-time.After(startGrace):
+			}
+		}
 		result := ServiceResult{
 			Branch: tree.Branch, Service: svcName, Port: p, PID: pid, Err: err,
 		}
@@ -213,6 +253,45 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 	}
 
 	return results
+}
+
+// ensureCACert makes sure isola's dev CA exists and returns its path, so
+// services can trust sibling HTTPS certs via NODE_EXTRA_CA_CERTS. It targets the
+// same cert dir the proxy daemon uses; EnsureCerts is idempotent, so generating
+// here (services start before the daemon) is safe and the daemon reuses it.
+// Returns "" on error (warned), leaving the CA env unset.
+func (m *Manager) ensureCACert() string {
+	dir, err := registry.GlobalDir()
+	if err != nil {
+		logging.Warn("HTTPS CA unavailable for service env: %v", err)
+		return ""
+	}
+	paths, err := cert.EnsureCerts(filepath.Join(dir, "certs"))
+	if err != nil {
+		logging.Warn("preparing HTTPS CA for service env: %v", err)
+		return ""
+	}
+	return paths.CACert
+}
+
+// runningPID returns the live PID of a service recorded as running, or 0 if it
+// is not currently running.
+func (m *Manager) runningPID(branch, service string) int {
+	var pid int
+	if err := m.store.WithLock(func() error {
+		st, err := m.store.Load()
+		if err != nil {
+			return err
+		}
+		ss := state.GetServiceState(st, branch, service)
+		if ss != nil && ss.Status == state.StatusRunning && ss.PID > 0 && IsProcessRunning(ss.PID) {
+			pid = ss.PID
+		}
+		return nil
+	}); err != nil {
+		logging.Warn("failed to read state for %s/%s: %v", branch, service, err)
+	}
+	return pid
 }
 
 // provisionAccessories brings up every configured accessory for the worktree,
@@ -260,9 +339,7 @@ func (m *Manager) provisionAccessories(tree *git.Worktree) map[string]string {
 			complete = false
 			continue
 		}
-		for k, v := range prov.Env {
-			env[k] = v
-		}
+		env[name] = prov.URL
 		if err := m.store.RecordAccessory(tree.Branch, name, a.Kind(), prov.Handle); err != nil {
 			logging.Warn("failed to record accessory state %s/%s: %v", tree.Branch, name, err)
 		}
@@ -272,6 +349,35 @@ func (m *Manager) provisionAccessories(tree *git.Worktree) map[string]string {
 		m.cacheAccessoryEnv(tree.Branch, env)
 	}
 	return env
+}
+
+// writeEnvFile upserts a service's resolved env into its env file per the
+// [env_file] policy, so tools that read the file directly (not just the process
+// environment) see this worktree's isolated values. Best-effort: it never blocks
+// the service. cleanRoot is the cleaned worktree root; the resolved file must
+// stay within it.
+func (m *Manager) writeEnvFile(tree *git.Worktree, svcName, dir, cleanRoot string, fileEnv map[string]string) {
+	name := m.cfg.ServiceEnvFile(svcName)
+	if name == "" || len(fileEnv) == 0 {
+		return
+	}
+	target := filepath.Clean(filepath.Join(dir, name))
+	if target != cleanRoot && !strings.HasPrefix(target, cleanRoot+string(filepath.Separator)) {
+		logging.Warn("env_file %q for %s resolves outside the worktree; skipping", name, svcName)
+		return
+	}
+	changed, err := copyfiles.UpsertEnv(target, fileEnv, m.cfg.EnvFile.Create)
+	if err != nil {
+		logging.Warn("writing env file for %s/%s: %v", tree.Branch, svcName, err)
+		return
+	}
+	if len(changed) > 0 {
+		rel, relErr := filepath.Rel(tree.Path, target)
+		if relErr != nil {
+			rel = name
+		}
+		logging.Info("Set %s in %s for %s/%s", strings.Join(changed, ", "), rel, tree.Branch, svcName)
+	}
 }
 
 // StopServices stops services for the given worktree.

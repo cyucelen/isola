@@ -61,8 +61,9 @@ type Provisioned struct {
 	// persisted in state and handed back to Drop, so teardown never depends on
 	// re-reading config and multi-resource drivers are supported.
 	Handle map[string]string
-	// Env holds the environment variables to merge into service environments.
-	Env map[string]string
+	// URL is the connection string this accessory exposes for the worktree.
+	// Services reference it explicitly as ${accessories.<name>.url}.
+	URL string
 }
 
 // Accessory is a driver instance bound to one [accessories.<name>] config entry.

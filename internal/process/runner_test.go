@@ -9,6 +9,51 @@ import (
 	"time"
 )
 
+func TestCACertReference(t *testing.T) {
+	envMap := func(r *Runner) map[string]string {
+		m := map[string]string{}
+		for _, e := range r.buildEnv() {
+			if parts := strings.SplitN(e, "=", 2); len(parts) == 2 {
+				m[parts[0]] = parts[1]
+			}
+		}
+		return m
+	}
+
+	t.Run("nothing runtime-specific is injected automatically", func(t *testing.T) {
+		// Even with a CA path set (HTTPS), isola must not guess the runtime and
+		// set a runtime var like NODE_EXTRA_CA_CERTS / SSL_CERT_FILE.
+		r := &Runner{config: RunnerConfig{ServiceName: "web", CACertPath: "/home/u/.isola/certs/ca.crt"}}
+		env := envMap(r)
+		for _, k := range []string{"NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"} {
+			if _, ok := env[k]; ok {
+				t.Errorf("%s was auto-injected; it must be opt-in via ${proxy.ca_cert}", k)
+			}
+		}
+	})
+
+	t.Run("service opts in via ${proxy.ca_cert}", func(t *testing.T) {
+		r := &Runner{config: RunnerConfig{
+			ServiceName: "web",
+			CACertPath:  "/home/u/.isola/certs/ca.crt",
+			Env:         map[string]string{"NODE_EXTRA_CA_CERTS": "${proxy.ca_cert}"},
+		}}
+		if got := envMap(r)["NODE_EXTRA_CA_CERTS"]; got != "/home/u/.isola/certs/ca.crt" {
+			t.Errorf("NODE_EXTRA_CA_CERTS = %q, want the resolved CA path", got)
+		}
+	})
+
+	t.Run("${proxy.ca_cert} is empty without HTTPS", func(t *testing.T) {
+		r := &Runner{config: RunnerConfig{
+			ServiceName: "web",
+			Env:         map[string]string{"NODE_EXTRA_CA_CERTS": "${proxy.ca_cert}"},
+		}}
+		if got := envMap(r)["NODE_EXTRA_CA_CERTS"]; got != "" {
+			t.Errorf("NODE_EXTRA_CA_CERTS = %q, want empty (no CA when HTTP)", got)
+		}
+	})
+}
+
 func TestBuildEnv(t *testing.T) {
 	runner := &Runner{
 		config: RunnerConfig{
@@ -503,7 +548,7 @@ func TestIsPortAvailable(t *testing.T) {
 	})
 }
 
-func TestBuildEnvInjectedVerbatim(t *testing.T) {
+func TestBuildEnvAccessoryRefVerbatim(t *testing.T) {
 	runner := &Runner{
 		config: RunnerConfig{
 			ServiceName: "web",
@@ -511,17 +556,14 @@ func TestBuildEnvInjectedVerbatim(t *testing.T) {
 			BranchSlug:  "feature-auth",
 			Command:     "npm start",
 			Port:        3150,
-			// Config env is subject to ${VAR} expansion...
-			Env: map[string]string{"DATABASE_URL": "should-be-overridden"},
-			// ...but injected accessory vars are passed through verbatim and win.
-			InjectedEnv: map[string]string{
-				"DATABASE_URL": "postgres://u:p${x}@host:5432/db",
-			},
+			// A ${accessories.<name>.url} ref resolves to the URL as-is; a ${...}
+			// inside that URL (e.g. in a password) is NOT re-expanded.
+			Env:               map[string]string{"DATABASE_URL": "${accessories.db.url}"},
+			AccessoriesByName: map[string]string{"db": "postgres://u:p${x}@host:5432/db"},
 		},
 	}
 
 	env := runner.buildEnv()
-	// Last write wins in exec.Cmd.Env; the injected value is appended last.
 	var got string
 	for _, e := range env {
 		if strings.HasPrefix(e, "DATABASE_URL=") {
@@ -529,6 +571,6 @@ func TestBuildEnvInjectedVerbatim(t *testing.T) {
 		}
 	}
 	if got != "postgres://u:p${x}@host:5432/db" {
-		t.Errorf("injected DATABASE_URL = %q; want verbatim value winning over config env", got)
+		t.Errorf("DATABASE_URL = %q; want the accessory URL verbatim (inner ${x} not re-expanded)", got)
 	}
 }

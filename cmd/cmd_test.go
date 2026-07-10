@@ -9,6 +9,7 @@ import (
 	"github.com/cyucelen/isola/internal/config"
 	"github.com/cyucelen/isola/internal/git"
 	"github.com/cyucelen/isola/internal/logging"
+	"github.com/cyucelen/isola/internal/registry"
 	"github.com/cyucelen/isola/internal/state"
 	"github.com/spf13/pflag"
 )
@@ -22,7 +23,7 @@ var testCfg = &config.Config{
 }
 
 const testConfig = `[services.web]
-command = "echo hello"
+command = "sleep 60"
 port_range = { min = 19100, max = 19199 }
 proxy_port = 19000
 `
@@ -163,7 +164,7 @@ func TestUpDownCommand(t *testing.T) {
 	setupTestRepo(t)
 	resetRootCmd()
 
-	// Start services (echo hello exits immediately).
+	// Start services (a long-running command so the liveness check passes).
 	rootCmd.SetArgs([]string{"up"})
 	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("up command: %v", err)
@@ -405,5 +406,33 @@ func TestDownAll(t *testing.T) {
 	rootCmd.SetArgs([]string{"down", "--all"})
 	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("down --all: %v", err)
+	}
+}
+
+func TestProxyConfigChanged(t *testing.T) {
+	cfg := &config.Config{
+		Services: map[string]config.ServiceConfig{
+			"api": {ProxyPort: 8000},
+			"web": {ProxyPort: 3000},
+		},
+	}
+	cfg.Proxy.HTTPS = true // ProxyPorts() = {8000, 3000}
+
+	cases := []struct {
+		name string
+		prev registry.Project
+		want bool
+	}{
+		{"identical", registry.Project{HTTPS: true, ProxyPorts: []int{3000, 8000}}, false},
+		{"scheme changed", registry.Project{HTTPS: false, ProxyPorts: []int{3000, 8000}}, true},
+		{"ports changed", registry.Project{HTTPS: true, ProxyPorts: []int{3000}}, true},
+		{"same ports different order", registry.Project{HTTPS: true, ProxyPorts: []int{8000, 3000}}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := proxyConfigChanged(c.prev, cfg); got != c.want {
+				t.Errorf("proxyConfigChanged = %v, want %v", got, c.want)
+			}
+		})
 	}
 }

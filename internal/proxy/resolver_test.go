@@ -25,7 +25,6 @@ func setupResolver(t *testing.T) (*Resolver, *state.FileStore) {
 				ProxyPort: 3000,
 			},
 		},
-		Env:       map[string]string{},
 		Worktrees: map[string]config.WTOverride{},
 	}
 

@@ -38,7 +38,6 @@ func TestValidate(t *testing.T) {
 					ProxyPort: 3000,
 				},
 			},
-			Env:       map[string]string{},
 			Worktrees: map[string]WTOverride{},
 		}
 	}
@@ -160,12 +159,8 @@ func TestEnvForBranch(t *testing.T) {
 		Services: map[string]ServiceConfig{
 			"web": {
 				Command: "npm start",
-				Env:     map[string]string{"DEBUG": "service", "SVC_ONLY": "yes"},
+				Env:     map[string]string{"NODE_ENV": "development", "DEBUG": "service", "SVC_ONLY": "yes"},
 			},
-		},
-		Env: map[string]string{
-			"NODE_ENV": "development",
-			"DEBUG":    "false",
 		},
 		Worktrees: map[string]WTOverride{
 			"feature/auth": {
@@ -176,26 +171,21 @@ func TestEnvForBranch(t *testing.T) {
 		},
 	}
 
-	t.Run("global and service env (no worktree)", func(t *testing.T) {
+	t.Run("service env (no worktree)", func(t *testing.T) {
 		env := cfg.EnvForBranch("web", "main")
 		if env["NODE_ENV"] != "development" {
 			t.Errorf("expected NODE_ENV=development, got %q", env["NODE_ENV"])
 		}
-		// service env overrides top-level [env]
 		if env["DEBUG"] != "service" {
-			t.Errorf("expected DEBUG=service (service overrides global), got %q", env["DEBUG"])
+			t.Errorf("expected DEBUG=service, got %q", env["DEBUG"])
 		}
 		if env["SVC_ONLY"] != "yes" {
 			t.Errorf("expected SVC_ONLY=yes, got %q", env["SVC_ONLY"])
 		}
 	})
 
-	t.Run("merge priority global < service < worktree", func(t *testing.T) {
+	t.Run("worktree override wins over service", func(t *testing.T) {
 		env := cfg.EnvForBranch("web", "feature/auth")
-		if env["NODE_ENV"] != "development" {
-			t.Errorf("expected NODE_ENV=development, got %q", env["NODE_ENV"])
-		}
-		// worktree override wins over service and global
 		if env["DEBUG"] != "true" {
 			t.Errorf("expected DEBUG=true (worktree overrides), got %q", env["DEBUG"])
 		}
@@ -211,7 +201,7 @@ func TestEnvForBranch(t *testing.T) {
 	t.Run("returns copy", func(t *testing.T) {
 		env := cfg.EnvForBranch("web", "main")
 		env["NODE_ENV"] = "production"
-		if cfg.Env["NODE_ENV"] != "development" {
+		if cfg.Services["web"].Env["NODE_ENV"] != "development" {
 			t.Error("EnvForBranch did not return a copy; original was mutated")
 		}
 	})
@@ -219,7 +209,6 @@ func TestEnvForBranch(t *testing.T) {
 	t.Run("empty env", func(t *testing.T) {
 		emptyCfg := &Config{
 			Services:  map[string]ServiceConfig{"web": {Command: "npm start"}},
-			Env:       map[string]string{},
 			Worktrees: map[string]WTOverride{},
 		}
 		env := emptyCfg.EnvForBranch("web", "main")

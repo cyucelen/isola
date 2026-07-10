@@ -81,9 +81,8 @@ func newDriver(t *testing.T, serverURL string) *driver {
 		ServerURL: serverURL,
 		CloneFrom: "myapp_dev",
 		Name:      "myapp_${ISOLA_BRANCH_SLUG}",
-		Inject:    "DATABASE_URL",
 	}
-	d, err := New("primary", func(v interface{}) error { *(v.(*pgConfig)) = cfg; return nil })
+	d, err := New("database", func(v interface{}) error { *(v.(*pgConfig)) = cfg; return nil })
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -106,7 +105,7 @@ func TestPostgresIntegration(t *testing.T) {
 		if prov.Handle["database"] != "myapp_feature-one" {
 			t.Errorf("Handle[database] = %q", prov.Handle["database"])
 		}
-		dbURL := prov.Env["DATABASE_URL"]
+		dbURL := prov.URL
 
 		// Seed data was physically copied from the template.
 		if got := mustRun(t, dbURL, "select count(*) from widgets"); got != "2" {
@@ -140,7 +139,7 @@ func TestPostgresIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Provision: %v", err)
 		}
-		dbURL := prov.Env["DATABASE_URL"]
+		dbURL := prov.URL
 		mustRun(t, dbURL, "insert into widgets(name) values('x'), ('y')")
 		if got := mustRun(t, dbURL, "select count(*) from widgets"); got != "4" {
 			t.Fatalf("pre-reset rows = %s, want 4", got)
@@ -208,7 +207,7 @@ func TestPostgresIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Provision with lingering template connection: %v", err)
 		}
-		if got := mustRun(t, prov.Env["DATABASE_URL"], "select count(*) from widgets"); got != "2" {
+		if got := mustRun(t, prov.URL, "select count(*) from widgets"); got != "2" {
 			t.Errorf("cloned db rows = %s, want 2", got)
 		}
 		_ = d.Drop(ctx, prov.Handle)

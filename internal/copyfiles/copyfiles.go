@@ -65,20 +65,25 @@ func Sync(patterns []string, srcRoot, dstRoot string) ([]string, error) {
 // UpsertEnv sets each key in vars to its value in the dotenv file at path,
 // replacing an existing assignment (correcting a value copied from elsewhere) or
 // appending the key if absent, while leaving every other line and comment
-// untouched. isola uses it so a worktree's `.env` carries that worktree's
-// isolated accessory URLs, for tools that read `.env` directly rather than the
-// process environment. It only edits an existing file: if path does not exist it
-// is a no-op (returns no keys), never creating a file. Returns the keys changed.
-func UpsertEnv(path string, vars map[string]string) ([]string, error) {
+// untouched. isola uses it so a worktree's env file carries that worktree's
+// resolved env (accessory URLs, etc.), for tools that read the file directly
+// rather than the process environment. If the file does not exist: when create
+// is true it is created (with the given vars), otherwise it is a no-op (returns
+// no keys). Returns the keys changed.
+func UpsertEnv(path string, vars map[string]string, create bool) ([]string, error) {
 	if len(vars) == 0 {
 		return nil, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil // only touch an existing file
+			if !create {
+				return nil, nil // only touch an existing file
+			}
+			data = nil // fall through and create it from the appended keys
+		} else {
+			return nil, err
 		}
-		return nil, err
 	}
 
 	keys := make([]string, 0, len(vars))
@@ -127,6 +132,11 @@ func UpsertEnv(path string, vars map[string]string) ([]string, error) {
 
 	if len(changed) == 0 {
 		return nil, nil
+	}
+	if create {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			return nil, err
+		}
 	}
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0600); err != nil {
 		return nil, err

@@ -89,9 +89,7 @@ var accessoryUpCmd = &cobra.Command{
 			}
 			recordAccessory(store, wt.Branch, name, a.Kind(), prov.Handle)
 			logging.Info("Brought up %s (%s) for %s", name, a.Kind(), wt.Branch)
-			for k, v := range prov.Env {
-				logging.Info("  %s=%s", k, v)
-			}
+			logging.Info("  reference it as ${accessories.%s.url} (%s)", name, prov.URL)
 			return nil
 		})
 	},

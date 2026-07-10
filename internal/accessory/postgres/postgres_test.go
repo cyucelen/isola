@@ -65,7 +65,6 @@ var baseCfg = pgConfig{
 	ServerURL: "postgres://isola:isola@localhost:5432/postgres",
 	CloneFrom: "myapp_dev",
 	Name:      "myapp_${ISOLA_BRANCH_SLUG}",
-	Inject:    "DATABASE_URL",
 }
 
 var wt = accessory.WorktreeInfo{Branch: "feature/auth", Slug: "feature-auth", Path: "/tmp/wt"}
@@ -79,7 +78,6 @@ func TestNewValidation(t *testing.T) {
 		{"missing server_url", func(c *pgConfig) { c.ServerURL = "" }, "server_url is required"},
 		{"missing clone_from", func(c *pgConfig) { c.CloneFrom = "" }, "clone_from is required"},
 		{"missing name", func(c *pgConfig) { c.Name = "" }, "name is required"},
-		{"missing inject", func(c *pgConfig) { c.Inject = "" }, "inject is required"},
 		{"invalid clone_from", func(c *pgConfig) { c.CloneFrom = `bad"name` }, "clone_from"},
 		{"dsn server_url without url override", func(c *pgConfig) {
 			c.ServerURL = "host=localhost port=5432 dbname=postgres"
@@ -115,8 +113,8 @@ func TestProvisionCreatesWhenAbsent(t *testing.T) {
 	if got.Handle["database"] != "myapp_feature-auth" {
 		t.Errorf("Handle[database] = %q, want myapp_feature-auth", got.Handle["database"])
 	}
-	if got.Env["DATABASE_URL"] != "postgres://isola:isola@localhost:5432/myapp_feature-auth" {
-		t.Errorf("injected URL = %q", got.Env["DATABASE_URL"])
+	if got.URL != "postgres://isola:isola@localhost:5432/myapp_feature-auth" {
+		t.Errorf("injected URL = %q", got.URL)
 	}
 
 	joined := strings.Join(*calls, "\n")
@@ -215,8 +213,8 @@ func TestConnURLOverride(t *testing.T) {
 		t.Fatalf("Provision: %v", err)
 	}
 	want := "postgres://app:app@localhost:5432/myapp_feature-auth?sslmode=disable"
-	if got.Env["DATABASE_URL"] != want {
-		t.Errorf("injected URL = %q, want %q", got.Env["DATABASE_URL"], want)
+	if got.URL != want {
+		t.Errorf("injected URL = %q, want %q", got.URL, want)
 	}
 }
 

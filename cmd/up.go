@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cyucelen/isola/internal/config"
 	"github.com/cyucelen/isola/internal/copyfiles"
 	"github.com/cyucelen/isola/internal/git"
 	"github.com/cyucelen/isola/internal/logging"
@@ -26,7 +27,7 @@ var (
 
 var upCmd = &cobra.Command{
 	Use:   "up",
-	Short: "Start dev servers for the current worktree",
+	Short: "Start services for the current worktree",
 	Long:  "Starts all configured services (or a specific one) for the current worktree, or all worktrees with --all.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cwd, err := os.Getwd()
@@ -72,6 +73,8 @@ var upCmd = &cobra.Command{
 		}
 
 		totalStarted := 0
+		totalRunning := 0
+		totalFailed := 0
 		for _, tree := range trees {
 			if tree.IsBare {
 				continue
@@ -89,9 +92,14 @@ var upCmd = &cobra.Command{
 
 			results := mgr.StartServices(&tree, upService)
 			for _, r := range results {
-				if r.Err != nil {
+				switch {
+				case r.Err != nil:
 					logging.Error("starting %s/%s: %v", r.Branch, r.Service, r.Err)
-				} else {
+					totalFailed++
+				case r.AlreadyRunning:
+					logging.Info("%s already running (port %d) for %s", r.Service, r.Port, r.Branch)
+					totalRunning++
+				default:
 					logging.Info("Starting %s (port %d) for %s ...", r.Service, r.Port, r.Branch)
 					totalStarted++
 				}
@@ -108,6 +116,8 @@ var upCmd = &cobra.Command{
 			} else {
 				logging.Info("✓ %d %s started for %s", totalStarted, noun, trees[0].Branch)
 			}
+		} else if totalRunning > 0 && totalFailed == 0 {
+			logging.Info("✓ already up to date; all services running")
 		}
 
 		// Register this project with the shared proxy and ensure the machine-wide
@@ -117,37 +127,56 @@ var upCmd = &cobra.Command{
 			reg, err := registry.Open()
 			if err != nil {
 				logging.Warn("proxy registry unavailable: %v", err)
-			} else if err := reg.Register(registry.Project{
-				Name:       cfg.Project,
-				StateDir:   store.Dir(),
-				ProxyPorts: cfg.ProxyPorts(),
-				HTTPS:      cfg.Proxy.HTTPS,
-			}); err != nil {
-				logging.Warn("registering project with proxy: %v", err)
 			} else {
-				started, derr := proxy.EnsureDaemon(reg)
-				switch {
-				case derr != nil:
-					logging.Warn("proxy daemon start failed: %v", derr)
-				case started:
-					logging.Info("✓ proxy started")
-				default:
-					logging.Verbose("proxy already running")
-				}
-				scheme := "http"
-				if cfg.Proxy.HTTPS {
-					scheme = "https"
-				}
-				logging.Info("Reach services at %s://<branch-slug>.%s.localhost:<proxy_port>", scheme, cfg.Project)
+				// Capture the project's previous registration before overwriting
+				// it, so we can tell whether the proxy scheme or ports changed.
+				prev, hadPrev, _ := reg.Lookup(cfg.Project)
+				if regErr := reg.Register(registry.Project{
+					Name:       cfg.Project,
+					StateDir:   store.Dir(),
+					ProxyPorts: cfg.ProxyPorts(),
+					HTTPS:      cfg.Proxy.HTTPS,
+				}); regErr != nil {
+					logging.Warn("registering project with proxy: %v", regErr)
+				} else {
+					started, derr := proxy.EnsureDaemon(reg)
+					switch {
+					case derr != nil:
+						logging.Warn("proxy daemon start failed: %v", derr)
+					case started:
+						logging.Info("✓ proxy started")
+					default:
+						logging.Verbose("proxy already running")
+						// A running shared daemon binds each port with the scheme
+						// it read at startup; it won't pick up a scheme/port change
+						// for this project until it is restarted.
+						if hadPrev && proxyConfigChanged(prev, cfg) {
+							logging.Warn("proxy config changed but the shared proxy is already running with the old settings; restart it with `isola proxy stop` then `isola up` to apply.")
+						}
+					}
 
-				// With HTTPS, trust the shared CA so browsers don't warn. Never
-				// blocks `up`; only runs on an interactive terminal.
-				if derr == nil && cfg.Proxy.HTTPS && cfg.AutoTrustEnabled() {
-					ensureHTTPSTrust(filepath.Join(reg.Dir(), "certs", "ca.crt"))
+					// Only advertise reachability when something is actually up;
+					// printing it after a failed start reads as false success.
+					if totalStarted > 0 || totalRunning > 0 {
+						scheme := "http"
+						if cfg.Proxy.HTTPS {
+							scheme = "https"
+						}
+						logging.Info("Reach services at %s://<branch-slug>.%s.localhost:<proxy_port>", scheme, cfg.Project)
+					}
+
+					// With HTTPS, trust the shared CA so browsers don't warn. Never
+					// blocks `up`; only runs on an interactive terminal.
+					if derr == nil && cfg.Proxy.HTTPS && cfg.AutoTrustEnabled() {
+						ensureHTTPSTrust(filepath.Join(reg.Dir(), "certs", "ca.crt"))
+					}
 				}
 			}
 		}
 
+		if totalFailed > 0 {
+			return fmt.Errorf("%d service(s) failed to start; see the errors above", totalFailed)
+		}
 		return nil
 	},
 }
@@ -180,6 +209,35 @@ func ensureHTTPSTrust(caPath string) {
 		return
 	}
 	logging.Info("✓ HTTPS CA trusted")
+}
+
+// proxyConfigChanged reports whether the proxy-relevant config (HTTPS scheme or
+// the set of proxy ports) differs from a project's previous registration, i.e.
+// whether an already-running shared daemon would be serving stale settings.
+func proxyConfigChanged(prev registry.Project, c *config.Config) bool {
+	if prev.HTTPS != c.Proxy.HTTPS {
+		return true
+	}
+	return !sameInts(prev.ProxyPorts, c.ProxyPorts())
+}
+
+func sameInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[int]int, len(a))
+	for _, v := range a {
+		seen[v]++
+	}
+	for _, v := range b {
+		seen[v]--
+	}
+	for _, n := range seen {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func init() {

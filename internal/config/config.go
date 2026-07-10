@@ -20,7 +20,6 @@ type Config struct {
 	// a DNS label since it appears in a subdomain. See docs/adr/006-shared-proxy.md.
 	Project   string                   `toml:"project"`
 	Services  map[string]ServiceConfig `toml:"services"`
-	Env       map[string]string        `toml:"env"`
 	Worktrees map[string]WTOverride    `toml:"worktrees"`
 	// Accessories holds each [accessories.<name>] body as an undecoded TOML
 	// primitive. The shared "kind" field is read centrally; the rest is decoded
@@ -36,6 +35,44 @@ type Config struct {
 	// worktree into each worktree on `isola up` (git worktrees omit gitignored
 	// files). Unset means the default [".env"]; an explicit empty list disables.
 	CopyFiles []string `toml:"copy_files"`
+	// EnvFile controls whether isola also writes each service's resolved env
+	// into an env file the app reads (in addition to the process environment).
+	EnvFile EnvFileConfig `toml:"env_file"`
+}
+
+// EnvFileConfig is the project-wide policy for writing services' env into files.
+type EnvFileConfig struct {
+	// Enabled toggles writing env into services' env files. Unset means enabled.
+	Enabled *bool `toml:"enabled"`
+	// Create writes the file when absent; unset/false only updates an existing one.
+	Create bool `toml:"create"`
+	// Path is the default env-file name, resolved relative to each service's dir.
+	// Unset means ".env". A service may override it with its own `env_file`.
+	Path string `toml:"path"`
+}
+
+// EnvFileEnabled reports whether env-file writing is on (default: on).
+func (c *Config) EnvFileEnabled() bool {
+	return c.EnvFile.Enabled == nil || *c.EnvFile.Enabled
+}
+
+// ServiceEnvFile returns the env-file name for a service (relative to its dir),
+// or "" if writing is disabled for it. Resolution: env-file writing off -> "";
+// per-service `env_file` unset -> the global path (default ".env"); set to ""
+// -> disabled for this service; set to a name -> that name.
+func (c *Config) ServiceEnvFile(service string) string {
+	if !c.EnvFileEnabled() {
+		return ""
+	}
+	def := c.EnvFile.Path
+	if def == "" {
+		def = ".env"
+	}
+	svc, ok := c.Services[service]
+	if !ok || svc.EnvFile == nil {
+		return def
+	}
+	return *svc.EnvFile // may be "" (disabled) or a custom name
 }
 
 // FilesToCopy returns the glob patterns of files to copy into each worktree.
@@ -153,6 +190,9 @@ type ServiceConfig struct {
 	PortRange PortRange         `toml:"port_range"`
 	ProxyPort int               `toml:"proxy_port"`
 	Env       map[string]string `toml:"env,omitempty"`
+	// EnvFile overrides the env-file name for this service (relative to its dir).
+	// Unset inherits [env_file].path; "" opts this service out. See EnvFileConfig.
+	EnvFile *string `toml:"env_file,omitempty"`
 }
 
 // PortRange defines the range of ports available for allocation.
@@ -187,7 +227,6 @@ func DefaultConfig() *Config {
 				ProxyPort: 3000,
 			},
 		},
-		Env:       map[string]string{},
 		Worktrees: map[string]WTOverride{},
 	}
 }
@@ -212,9 +251,6 @@ func Load(repoRoot string) (*Config, error) {
 
 	if cfg.Services == nil {
 		cfg.Services = map[string]ServiceConfig{}
-	}
-	if cfg.Env == nil {
-		cfg.Env = map[string]string{}
 	}
 	if cfg.Worktrees == nil {
 		cfg.Worktrees = map[string]WTOverride{}
@@ -313,7 +349,7 @@ func Init(dir string) (string, error) {
 		return path, fmt.Errorf("%s already exists", FileName)
 	}
 
-	content := `# isola - Git Worktree Server Manager configuration
+	content := `# isola configuration - an isolated dev environment per git worktree
 # See: https://github.com/cyucelen/isola
 
 # --- Project name ---
@@ -328,6 +364,16 @@ func Init(dir string) (string, error) {
 # [] to disable. Must stay above the [sections] below (it is a top-level key).
 # copy_files = [".env", ".env.*"]
 
+# --- Env files (optional) ---
+# Besides the process environment, isola can write each service's resolved env
+# (your [env], accessory URLs, and any \${...} refs) into an env file the app
+# reads. Resolved relative to each service's dir; a service can override the
+# filename with its own env_file = "..." (or "" to opt out).
+# [env_file]
+# enabled = true    # write env into services' env files
+# create  = false   # only update an existing file (true = create it if missing)
+# path    = ".env"  # default filename, per service dir
+
 # --- Service definitions ---
 # Define services to run per worktree.
 # Each service has its own command, directory, port range, and proxy port.
@@ -337,37 +383,37 @@ command = "pnpm run dev"
 dir = "frontend"                        # relative to worktree root (empty = root)
 port_range = { min = 3100, max = 3199 } # port allocation range for this service
 proxy_port = 3000                        # proxy listens on this port
+# Per-service env: injected into the process and written to the env file.
+# Reference isola values with ${...}: accessories.<name>.url, services.<name>.url,
+# services.<name>.port.
+env = { NODE_ENV = "development", API_URL = "${services.backend.url}" }
 
 [services.backend]
-command = "source .venv/bin/activate && python manage.py runserver 0.0.0.0:$PORT"
+command = "go run ./cmd/server"
 dir = "backend"
 port_range = { min = 8100, max = 8199 }
 proxy_port = 8000
+# env = { DATABASE_URL = "${accessories.database.url}" }   # (uncomment the accessory below)
 
 # --- Per-worktree accessories (optional) ---
 # Isolate stateful dependencies per worktree. isola brings up each accessory
 # on 'up' and tears it down on 'down --prune'. It connects to your existing
-# server and never manages the server itself.
+# server and never manages the server itself. A service opts in by referencing
+# ${accessories.<name>.url} in its env (there is no auto-injected key).
 #
-# [accessories.primary]
+# [accessories.database]
 # kind       = "postgres"                                       # driver
 # server_url = "postgres://postgres@localhost:5432/postgres"    # existing server + maintenance db
 # clone_from = "myapp_dev"                                      # seeded template copied per worktree
 # name       = "myapp_${ISOLA_BRANCH_SLUG}"                     # per-worktree database name
-# inject     = "DATABASE_URL"                                   # env var injected into services
-# # url      = "postgres://app:app@localhost:5432/${db}"        # optional injected-URL override (${db} = name)
+# # url      = "postgres://app:app@localhost:5432/${db}"        # optional URL override (${db} = name)
 #
 # [accessories.cache]
 # kind       = "redis"                                          # per-worktree Redis logical DB
 # server_url = "redis://localhost:6379"
-# inject     = "REDIS_URL"
-
-# --- Global environment variables ---
-[env]
-# NODE_ENV = "development"
 
 # --- Reverse proxy ---
-# isola auto-starts the proxy on 'up' (http://<branch-slug>.localhost:<proxy_port>).
+# isola auto-starts the proxy on 'up' (http://<branch-slug>.<project>.localhost:<proxy_port>).
 # [proxy]
 # enabled    = true    # set false to start it yourself with 'isola proxy start'
 # https      = false   # serve HTTPS with auto-generated certs
@@ -399,12 +445,9 @@ func (c *Config) CommandForBranch(service, branch string) string {
 }
 
 // EnvForBranch returns merged environment variables for a given service and branch.
-// Priority (low -> high): top-level [env] -> [services.<svc>].env -> [worktrees.<branch>].services.<svc>.env
+// Priority (low -> high): [services.<svc>].env -> [worktrees.<branch>].services.<svc>.env
 func (c *Config) EnvForBranch(service, branch string) map[string]string {
-	merged := make(map[string]string, len(c.Env))
-	for k, v := range c.Env {
-		merged[k] = v
-	}
+	merged := map[string]string{}
 	if svc, ok := c.Services[service]; ok {
 		for k, v := range svc.Env {
 			merged[k] = v

@@ -33,7 +33,7 @@ func (d *cmdFakeDriver) Kind() string { return "cmdfake" }
 func (d *cmdFakeDriver) Provision(_ context.Context, wt accessory.WorktreeInfo) (accessory.Provisioned, error) {
 	return accessory.Provisioned{
 		Handle: map[string]string{"id": "res-" + wt.Slug},
-		Env:    map[string]string{"DATABASE_URL": "fake://" + wt.Slug},
+		URL:    "fake://" + wt.Slug,
 	}, nil
 }
 func (d *cmdFakeDriver) Reset(ctx context.Context, wt accessory.WorktreeInfo) (accessory.Provisioned, error) {
@@ -49,7 +49,7 @@ type cmdFakeNoReset struct{ name string }
 func (d *cmdFakeNoReset) Name() string { return d.name }
 func (d *cmdFakeNoReset) Kind() string { return "cmdfake-noreset" }
 func (d *cmdFakeNoReset) Provision(_ context.Context, wt accessory.WorktreeInfo) (accessory.Provisioned, error) {
-	return accessory.Provisioned{Handle: map[string]string{"id": "x"}, Env: map[string]string{}}, nil
+	return accessory.Provisioned{Handle: map[string]string{"id": "x"}, URL: "fake://x"}, nil
 }
 func (d *cmdFakeNoReset) Drop(_ context.Context, handle map[string]string) error { return nil }
 

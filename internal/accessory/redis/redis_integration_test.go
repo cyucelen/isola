@@ -47,7 +47,7 @@ func startRedis(t *testing.T) string {
 func newDriver(t *testing.T, serverURL string) *driver {
 	t.Helper()
 	d, err := New("cache", func(v interface{}) error {
-		*(v.(*rdConfig)) = rdConfig{ServerURL: serverURL, Inject: "REDIS_URL"}
+		*(v.(*rdConfig)) = rdConfig{ServerURL: serverURL}
 		return nil
 	})
 	if err != nil {
@@ -88,8 +88,8 @@ func TestRedisIntegration(t *testing.T) {
 	}
 
 	// Isolation: a write in main's DB must not be visible in feature's DB.
-	ca := clientFor(t, a.Env["REDIS_URL"])
-	cb := clientFor(t, b.Env["REDIS_URL"])
+	ca := clientFor(t, a.URL)
+	cb := clientFor(t, b.URL)
 	if err := ca.Set(ctx, "greeting", "hello", 0).Err(); err != nil {
 		t.Fatalf("set in main db: %v", err)
 	}

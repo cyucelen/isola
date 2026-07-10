@@ -116,7 +116,7 @@ func TestUpsertEnvReplacesAndAppends(t *testing.T) {
 	changed, err := UpsertEnv(p, map[string]string{
 		"DATABASE_URL": "postgres://iso/feature",   // existing -> replaced
 		"REDIS_URL":    "redis://localhost:6379/2", // absent -> appended
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("UpsertEnv: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestUpsertEnvReplacesAndAppends(t *testing.T) {
 func TestUpsertEnvNoFileIsNoop(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, ".env")
-	changed, err := UpsertEnv(p, map[string]string{"DATABASE_URL": "x"})
+	changed, err := UpsertEnv(p, map[string]string{"DATABASE_URL": "x"}, false)
 	if err != nil {
 		t.Fatalf("UpsertEnv: %v", err)
 	}
@@ -150,12 +150,28 @@ func TestUpsertEnvPreservesExportAndIgnoresComments(t *testing.T) {
 	p := filepath.Join(dir, ".env")
 	write(t, p, "# DATABASE_URL=commented-out\nexport DATABASE_URL=old\n")
 
-	if _, err := UpsertEnv(p, map[string]string{"DATABASE_URL": "new"}); err != nil {
+	if _, err := UpsertEnv(p, map[string]string{"DATABASE_URL": "new"}, false); err != nil {
 		t.Fatalf("UpsertEnv: %v", err)
 	}
 	got, _ := os.ReadFile(p)
 	want := "# DATABASE_URL=commented-out\nexport DATABASE_URL=new\n"
 	if string(got) != want {
 		t.Errorf("result:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+func TestUpsertEnvCreatesWhenAsked(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "nested", ".env")
+	changed, err := UpsertEnv(p, map[string]string{"DATABASE_URL": "postgres://iso/x"}, true)
+	if err != nil {
+		t.Fatalf("UpsertEnv: %v", err)
+	}
+	if len(changed) != 1 {
+		t.Fatalf("changed = %v, want 1", changed)
+	}
+	got, _ := os.ReadFile(p)
+	if string(got) != "DATABASE_URL=postgres://iso/x\n" {
+		t.Errorf("created file = %q", got)
 	}
 }

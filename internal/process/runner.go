@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cyucelen/isola/internal/browser"
 	"github.com/cyucelen/isola/internal/expand"
 	"github.com/cyucelen/isola/internal/logging"
 )
@@ -27,16 +28,20 @@ type RunnerConfig struct {
 	Dir         string // absolute working directory
 	Port        int
 	Env         map[string]string // merged environment variables (subject to ${VAR} expansion)
-	// InjectedEnv holds already-resolved vars (e.g. accessory DATABASE_URL) that
-	// must be passed through verbatim, without ${VAR} expansion, and win over Env.
-	InjectedEnv map[string]string
-	LogDir      string // directory for log files
+	// AccessoriesByName maps accessory name -> its URL, for ${accessories.<name>.url}.
+	AccessoriesByName map[string]string
+	LogDir            string // directory for log files
 	// AllServicePorts maps service name -> assigned port for cross-service env vars.
 	AllServicePorts map[string]int
 	// AllServiceProxyPorts maps service name -> proxy port for URL env vars.
 	AllServiceProxyPorts map[string]int
 	// ProxyScheme is "http" or "https" for ISOLA_*_URL env vars.
 	ProxyScheme string
+	// CACertPath, when set (HTTPS), is the path to isola's dev CA. It is not
+	// injected anywhere automatically; it is exposed for the ${proxy.ca_cert}
+	// reference so a service can wire it into whichever CA env var its runtime
+	// uses (e.g. NODE_EXTRA_CA_CERTS) to trust sibling HTTPS without `isola trust`.
+	CACertPath string
 }
 
 // Runner manages a single child process.
@@ -219,78 +224,117 @@ func IsPortAvailable(port int) bool {
 	return true
 }
 
-// buildEnv constructs the full environment for the child process.
-func (r *Runner) buildEnv() []string {
-	env := os.Environ()
-
-	// Build a lookup of the auto-injected isola vars first so config env
-	// values can interpolate against them (e.g. "${ISOLA_API_URL}").
-	scheme := r.config.ProxyScheme
-	if scheme == "" {
-		scheme = "http"
+// scheme returns the proxy scheme, defaulting to http.
+func (r *Runner) scheme() string {
+	if r.config.ProxyScheme == "" {
+		return "http"
 	}
-	injected := map[string]string{
+	return r.config.ProxyScheme
+}
+
+// builtins returns the isola auto-injected variables for this service.
+func (r *Runner) builtins() map[string]string {
+	m := map[string]string{
 		"PORT":              fmt.Sprintf("%d", r.config.Port),
 		"ISOLA_BRANCH":      r.config.Branch,
 		"ISOLA_BRANCH_SLUG": r.config.BranchSlug,
 		"ISOLA_SERVICE":     r.config.ServiceName,
 	}
 	for svcName, svcPort := range r.config.AllServicePorts {
-		injected["ISOLA_"+strings.ToUpper(svcName)+"_PORT"] = fmt.Sprintf("%d", svcPort)
-	}
-	host := r.config.BranchSlug
-	if r.config.Project != "" {
-		host += "." + r.config.Project // project-qualified for the shared proxy
+		m["ISOLA_"+strings.ToUpper(svcName)+"_PORT"] = fmt.Sprintf("%d", svcPort)
 	}
 	for svcName, proxyPort := range r.config.AllServiceProxyPorts {
-		injected["ISOLA_"+strings.ToUpper(svcName)+"_URL"] = fmt.Sprintf("%s://%s.localhost:%d", scheme, host, proxyPort)
+		m["ISOLA_"+strings.ToUpper(svcName)+"_URL"] = browser.BuildURL(r.scheme(), r.config.BranchSlug, r.config.Project, proxyPort)
 	}
+	return m
+}
 
-	// Expand ${VAR} references in config env values against the injected vars,
-	// falling back to the process environment so ${HOME} and similar still
-	// resolve. Only the explicit ${...} form is interpolated; a bare "$" is
-	// left literal so existing values such as passwords ("p$ssw0rd") survive
-	// byte-for-byte.
-	expandVar := func(name string) string {
-		if v, ok := injected[name]; ok {
+// resolver returns the ${...} expansion function: isola built-ins, the
+// accessories.<name>.url / services.<name>.url / services.<name>.port reference
+// namespace, then the process environment. Only the explicit ${...} form is
+// interpolated; a bare "$" is left literal so values like "p$ssw0rd" survive.
+func (r *Runner) resolver(builtins map[string]string) func(string) string {
+	return func(name string) string {
+		if v, ok := builtins[name]; ok {
 			return v
+		}
+		if rest, ok := strings.CutPrefix(name, "accessories."); ok {
+			if key, ok := strings.CutSuffix(rest, ".url"); ok {
+				return r.config.AccessoriesByName[key]
+			}
+		}
+		if rest, ok := strings.CutPrefix(name, "services."); ok {
+			if svc, ok := strings.CutSuffix(rest, ".url"); ok {
+				if p, ok := r.config.AllServiceProxyPorts[svc]; ok {
+					return browser.BuildURL(r.scheme(), r.config.BranchSlug, r.config.Project, p)
+				}
+				return ""
+			}
+			if svc, ok := strings.CutSuffix(rest, ".port"); ok {
+				if p, ok := r.config.AllServicePorts[svc]; ok {
+					return fmt.Sprintf("%d", p)
+				}
+				return ""
+			}
+		}
+		// proxy.ca_cert is the path to isola's dev CA (empty unless HTTPS). A
+		// service opts in by mapping it to its runtime's CA var in its own env,
+		// e.g. NODE_EXTRA_CA_CERTS = "${proxy.ca_cert}"; isola never sets a
+		// runtime-specific var itself.
+		if name == "proxy.ca_cert" {
+			return r.config.CACertPath
 		}
 		return os.Getenv(name)
 	}
+}
 
-	// Add global and worktree-override env vars (interpolated).
+// resolvedConfigEnv returns the service's config env (global [env] + service +
+// per-worktree overrides) with ${...} references expanded. Keys/values with a
+// null byte are dropped with a warning.
+func (r *Runner) resolvedConfigEnv() map[string]string {
+	expandVar := r.resolver(r.builtins())
+	out := make(map[string]string, len(r.config.Env))
 	for k, v := range r.config.Env {
 		if strings.ContainsRune(k, 0) || strings.ContainsRune(v, 0) {
 			logging.Warn("skipping env var %q: contains null byte", k)
 			continue
 		}
-		env = append(env, k+"="+expand.Braces(v, expandVar))
+		out[k] = expand.Braces(v, expandVar)
 	}
+	return out
+}
 
-	// Add isola auto-injected vars last so built-ins remain authoritative.
-	env = append(env,
-		fmt.Sprintf("PORT=%d", r.config.Port),
-		fmt.Sprintf("ISOLA_BRANCH=%s", r.config.Branch),
-		fmt.Sprintf("ISOLA_BRANCH_SLUG=%s", r.config.BranchSlug),
-		fmt.Sprintf("ISOLA_SERVICE=%s", r.config.ServiceName),
-	)
-	for svcName, svcPort := range r.config.AllServicePorts {
-		env = append(env, fmt.Sprintf("ISOLA_%s_PORT=%d", strings.ToUpper(svcName), svcPort))
-	}
-	for svcName, proxyPort := range r.config.AllServiceProxyPorts {
-		env = append(env, fmt.Sprintf("ISOLA_%s_URL=%s://%s.localhost:%d", strings.ToUpper(svcName), scheme, r.config.BranchSlug, proxyPort))
-	}
+// FileEnv returns the variables isola writes into a service's env file: its
+// resolved config env (with ${...} references expanded, so accessory URLs and
+// sibling URLs are already substituted). Ephemeral built-ins (PORT, ISOLA_*) are
+// intentionally excluded — they change per run and would go stale in a file.
+func (r *Runner) FileEnv() map[string]string {
+	return r.resolvedConfigEnv()
+}
 
-	// Injected accessory vars are already fully resolved by their driver, so add
-	// them last and verbatim — no ${VAR} expansion — so a value containing a
-	// literal "${...}" (e.g. in a password) survives byte-for-byte.
-	for k, v := range r.config.InjectedEnv {
-		if strings.ContainsRune(k, 0) || strings.ContainsRune(v, 0) {
-			logging.Warn("skipping injected env var %q: contains null byte", k)
-			continue
+// buildEnv constructs the full environment for the child process by merging
+// layers in increasing precedence: parent environment, then the config env
+// (expanded), then the isola built-ins. Keys are deduplicated so precedence is
+// deterministic: with duplicate keys in a process environment, libc typically
+// returns the first, so relying on append order would be unreliable (a later
+// layer would not actually override an earlier one).
+func (r *Runner) buildEnv() []string {
+	merged := map[string]string{}
+	for _, e := range os.Environ() {
+		if parts := strings.SplitN(e, "=", 2); len(parts) == 2 {
+			merged[parts[0]] = parts[1]
 		}
+	}
+	for k, v := range r.resolvedConfigEnv() {
+		merged[k] = v
+	}
+	for k, v := range r.builtins() {
+		merged[k] = v
+	}
+
+	env := make([]string, 0, len(merged))
+	for k, v := range merged {
 		env = append(env, k+"="+v)
 	}
-
 	return env
 }
