@@ -78,7 +78,15 @@ func (s *FileStore) Load() (*State, error) {
 
 	var st State
 	if err := json.Unmarshal(data, &st); err != nil {
-		logging.Warn("corrupt state file, starting fresh: %v", err)
+		// Don't silently discard a corrupt file: state is the authority for
+		// safe teardown, so preserve it (a human can recover records from it)
+		// and start fresh rather than dropping accessory/port records forever.
+		corrupt := s.filePath + ".corrupt"
+		if rerr := os.Rename(s.filePath, corrupt); rerr != nil {
+			logging.Warn("state file is corrupt (%v) and could not be set aside (%v); starting fresh", err, rerr)
+		} else {
+			logging.Warn("state file was corrupt (%v); moved it to %s and started fresh", err, corrupt)
+		}
 		return emptyState(), nil
 	}
 	if st.Services == nil {
@@ -93,13 +101,44 @@ func (s *FileStore) Load() (*State, error) {
 	return &st, nil
 }
 
-// Save writes the state to disk.
+// Save writes the state to disk atomically: a partial or truncated file (from a
+// crash or a killed process mid-write) would make the next Load discard the
+// state and orphan the databases/ports it records, so it must never happen.
 func (s *FileStore) Save(st *State) error {
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling state: %w", err)
 	}
-	return os.WriteFile(s.filePath, data, 0600)
+	return writeFileAtomic(s.filePath, data, 0600)
+}
+
+// writeFileAtomic writes data to a temp file in the same directory, fsyncs it,
+// then renames it over path. The rename is atomic on POSIX, so a reader (or a
+// crash) never observes a half-written file: it sees either the old contents or
+// the complete new ones.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".state-*.tmp")
+	if err != nil {
+		return fmt.Errorf("creating temp state file: %w", err)
+	}
+	tmp := f.Name()
+	defer func() { _ = os.Remove(tmp) }() // no-op once the rename succeeds
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("writing state: %w", err)
+	}
+	if err := f.Chmod(perm); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("syncing state: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // Dir returns the state directory path.

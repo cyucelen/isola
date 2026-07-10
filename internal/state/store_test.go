@@ -270,6 +270,34 @@ func TestFileStoreSaveAndLoad(t *testing.T) {
 	}
 }
 
+func TestFileStoreLoadCorruptPreservesFile(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewFileStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.filePath, []byte("{not valid json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// A corrupt file must not fail Load, but must not be silently discarded.
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load() on corrupt file should not error, got: %v", err)
+	}
+	if loaded == nil || len(loaded.Services) != 0 {
+		t.Errorf("corrupt Load should return an empty state, got %+v", loaded)
+	}
+	corrupt := store.filePath + ".corrupt"
+	data, err := os.ReadFile(corrupt)
+	if err != nil {
+		t.Fatalf("corrupt file should be preserved at %s: %v", corrupt, err)
+	}
+	if string(data) != "{not valid json" {
+		t.Errorf("preserved corrupt file = %q, want the original bytes", data)
+	}
+}
+
 func TestFileStoreWithLock(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewFileStore(dir)

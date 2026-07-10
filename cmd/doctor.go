@@ -2,16 +2,16 @@ package cmd
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 
 	"github.com/cyucelen/isola/internal/config"
 	"github.com/cyucelen/isola/internal/git"
 	"github.com/cyucelen/isola/internal/process"
+	"github.com/cyucelen/isola/internal/proxy"
+	"github.com/cyucelen/isola/internal/registry"
 	"github.com/cyucelen/isola/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -142,21 +142,32 @@ func checkPortConflicts(cfg *config.Config) []checkResult {
 	}
 	sort.Strings(names)
 
+	// Ports isola's own running proxy is expected to hold, so we don't flag them
+	// as conflicts (the whole point is that the proxy binds these).
+	ownProxyPorts := map[int]bool{}
+	if reg, err := registry.Open(); err == nil {
+		if running, _ := proxy.DaemonRunning(reg); running {
+			if ports, err := reg.Ports(); err == nil {
+				for _, p := range ports {
+					ownProxyPorts[p] = true
+				}
+			}
+		}
+	}
+
 	var results []checkResult
 	for _, name := range names {
-		svc := cfg.Services[name]
-		ln, err := net.Listen("tcp", ":"+strconv.Itoa(svc.ProxyPort))
-		if err != nil {
+		port := cfg.Services[name].ProxyPort
+		label := fmt.Sprintf("proxy port %d (%s) available", port, name)
+		switch {
+		case process.IsPortAvailable(port):
+			results = append(results, checkResult{name: label, ok: true})
+		case ownProxyPorts[port]:
+			results = append(results, checkResult{name: label, ok: true, detail: "served by isola's proxy"})
+		default:
 			results = append(results, checkResult{
-				name:   fmt.Sprintf("proxy port %d (%s) available", svc.ProxyPort, name),
-				ok:     false,
-				detail: fmt.Sprintf("port %d already in use", svc.ProxyPort),
-			})
-		} else {
-			_ = ln.Close()
-			results = append(results, checkResult{
-				name: fmt.Sprintf("proxy port %d (%s) available", svc.ProxyPort, name),
-				ok:   true,
+				name: label, ok: false,
+				detail: fmt.Sprintf("port %d already in use by another process", port),
 			})
 		}
 	}

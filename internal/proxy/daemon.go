@@ -171,6 +171,14 @@ func (d *Daemon) handler(port int) http.Handler {
 				pr.Out.Host = r.Host
 				pr.Out.Header.Set("X-Forwarded-Host", r.Host)
 			},
+			// The worktree is registered and has an assigned port, but the
+			// connection failed: the service isn't actually listening (ignoring
+			// $PORT, still starting, or crashed). Show the branded page instead
+			// of Go's default blank 502.
+			ErrorHandler: func(ew http.ResponseWriter, er *http.Request, _ error) {
+				writeProxyError(ew, er, http.StatusBadGateway, "Service not answering",
+					fmt.Sprintf("Worktree %q in project %q is registered on port %d, but nothing is answering there.\nThe service may be ignoring `$PORT` or have crashed. Check `isola logs`.", slug, project, backendPort))
+			},
 		}
 		rp.ServeHTTP(w, r)
 	})
