@@ -48,12 +48,15 @@ type Store struct {
 }
 
 // GlobalDir is the per-user directory holding the registry and daemon state.
+// It lives at ~/.isola, mirroring the per-repo .isola state directory, so the
+// isola namespace is the same everywhere rather than a platform-specific config
+// path (~/Library/Application Support on macOS, ~/.config on Linux).
 func GlobalDir() (string, error) {
-	cfgDir, err := os.UserConfigDir()
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("locating user config dir: %w", err)
+		return "", fmt.Errorf("locating home directory: %w", err)
 	}
-	return filepath.Join(cfgDir, "isola"), nil
+	return filepath.Join(home, ".isola"), nil
 }
 
 // Open creates (if needed) the global dir and returns a Store.

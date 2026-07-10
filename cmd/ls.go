@@ -170,18 +170,26 @@ func buildLsEntries(trees []git.Worktree, serviceNames []string, st *state.State
 
 func printLsTable(entries []lsEntry) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	_, _ = fmt.Fprintln(w, "WORKTREE\tSERVICE\tPORT\tSTATUS\tPID")
+	_, _ = fmt.Fprintln(w, "WORKTREE\tSERVICE\tPORT\tSTATUS\tPID\tURL")
 
 	for _, e := range entries {
 		portStr := "—"
 		pidStr := "—"
+		urlStr := "—"
 		if e.Port > 0 {
 			portStr = fmt.Sprintf("%d", e.Port)
 		}
 		if e.PID > 0 {
 			pidStr = fmt.Sprintf("%d", e.PID)
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", e.Worktree, e.Service, portStr, e.Status, pidStr)
+		// Prefer the proxy URL (what the user hits); fall back to the direct
+		// localhost URL when the proxy isn't running.
+		if e.URL != "" {
+			urlStr = e.URL
+		} else if e.DirectURL != "" {
+			urlStr = e.DirectURL
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", e.Worktree, e.Service, portStr, e.Status, pidStr, urlStr)
 	}
 
 	return w.Flush()
