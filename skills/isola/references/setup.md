@@ -1,9 +1,14 @@
 # Setting up isola
 
 isola runs each service defined in `.isola.toml` per git worktree, with
-automatic port allocation and `*.localhost` reverse-proxy routing. It spawns
-your existing dev commands directly (no Docker) and connects to your existing
+automatic port allocation and `<branch>.<project>.localhost` reverse-proxy
+routing through one machine-wide proxy shared by all projects. It spawns your
+existing dev commands directly (no Docker) and connects to your existing
 Postgres for database isolation — it never manages a server itself.
+
+The `project` name (default: the repo's directory) namespaces routing so
+multiple repos coexist. Set `project = "..."` at the top of `.isola.toml` to
+override it or resolve a clash with another repo of the same name.
 
 ## 1. Create the config
 
@@ -23,7 +28,7 @@ port_range = { min = 3100, max = 3199 }  # each branch gets a stable port in thi
 proxy_port = 3000                        # the proxy listens here for this service
 
 [services.backend]
-command    = "python manage.py runserver 0.0.0.0:$PORT"
+command    = "go run ./cmd/server"       # your server must read $PORT
 dir        = "backend"
 port_range = { min = 8100, max = 8199 }
 proxy_port = 8000
@@ -58,11 +63,16 @@ HTTPS, set it in config; then trust the generated CA once:
 https = true   # auto-generates a local CA + certs
 ```
 
+isola trusts this CA automatically on the first HTTPS `isola up` in a terminal
+(one password prompt). Since you likely run `up` non-interactively, tell the user
+to run `isola trust` once so browsers stop warning:
+
 ```bash
 isola trust                 # install the CA so browsers stop warning
 ```
 
-(Or run one manually: `isola proxy start --https`.)
+(HTTPS is per project; a port is served over HTTPS if any project using it set
+`https = true`.)
 
 ## 4. Optional: per-worktree databases
 

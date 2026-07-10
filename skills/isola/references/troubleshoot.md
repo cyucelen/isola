@@ -22,19 +22,25 @@ isola up
 
 If state looks stale after deleting worktrees, run `isola down --prune`.
 
-## URLs don't route (`<branch>.localhost` fails)
+## URLs don't route
 
-- The proxy must be running: `isola proxy start` (it runs in the foreground).
-- Routing uses the branch **slug** (`feature/auth` → `feature-auth`), so the URL
-  is `http://<slug>.localhost:<proxy_port>`. The bare `localhost:<proxy_port>`
-  maps to `main`.
+- The shared proxy must be running (`isola up` starts it; `isola proxy start`
+  runs it in the foreground).
+- URLs are **project-qualified**: `http://<slug>.<project>.localhost:<proxy_port>`
+  where `<slug>` is the branch slug (`feature/auth` → `feature-auth`) and
+  `<project>` is the repo's name (default: its directory; set via `project` in
+  `.isola.toml`). A bare `<slug>.localhost` is not routed and 404s with a hint.
+- Confirm the project is registered: it registers on `isola up` and deregisters
+  on `isola down --all`.
 - If two branches produce the same slug, `isola up` warns about the collision —
   rename one branch, since the proxy can't disambiguate them.
 
 ## HTTPS certificate warnings
 
+isola trusts its CA on the first HTTPS `isola up` in a terminal. A non-interactive
+`up` skips that, so if browsers warn, the user should run `isola trust` once:
+
 ```bash
-isola proxy start --https
 isola trust           # install the local CA into the system trust store
 ```
 

@@ -2,7 +2,7 @@
 
 isola operates on **git worktrees you create yourself** (it has no `add`/`remove`
 command). Each worktree's services get stable, per-branch ports and a
-`<branch-slug>.localhost` URL through the proxy.
+`<branch-slug>.<project>.localhost` URL through the shared proxy.
 
 ## Worktrees
 
@@ -34,17 +34,22 @@ to stop them. There is no `restart` verb — run `isola down` then `isola up`.
 
 ## Reach services in the browser
 
-`isola up` auto-starts the reverse proxy in the background, so services are
-reachable immediately at `http://<branch-slug>.localhost:<proxy_port>`. For a
-branch `feature/auth` with `proxy_port = 3000`, the frontend is at
-`http://feature-auth.localhost:3000`. The root `localhost:3000` routes to `main`.
+`isola up` registers this project and ensures the single machine-wide proxy is
+running, so services are reachable immediately at
+`http://<branch-slug>.<project>.localhost:<proxy_port>`. For project `myapp`,
+branch `feature/auth`, `proxy_port = 3000`, the frontend is at
+`http://feature-auth.myapp.localhost:3000`. URLs are always project-qualified;
+the bare `<branch>.localhost` form is not routed. Set `project` in `.isola.toml`
+to override the default (the repo's directory name).
 
-The proxy runs until you stop it:
+The one proxy serves every project and runs until you stop it (machine-wide):
 
 ```bash
-isola proxy stop             # stop the auto-started proxy
-isola proxy start            # run one manually in the foreground (e.g. if you set [proxy] enabled = false)
-isola proxy start --https    # HTTPS (or set [proxy] https = true; run `isola trust` once to silence warnings)
+isola proxy stop             # stop the shared proxy for ALL projects
+isola proxy start            # run it manually in the foreground (normally 'up' does this)
+# HTTPS: set [proxy] https = true. isola trusts its CA on the first HTTPS `up`
+# in a terminal; if you enabled it non-interactively, tell the user to run
+# `isola trust` once.
 ```
 
 ## Interactive dashboard
