@@ -4,7 +4,7 @@ COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE    := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS := -ldflags "-s -w -X github.com/cyucelen/isola/cmd.version=$(VERSION) -X github.com/cyucelen/isola/cmd.commit=$(COMMIT) -X github.com/cyucelen/isola/cmd.date=$(DATE)"
 
-.PHONY: build test lint clean install setup-hooks
+.PHONY: build test test-short e2e lint clean install setup-hooks fmt vet all
 
 build:
 	go build $(LDFLAGS) -o $(APP_NAME) .
@@ -17,6 +17,11 @@ test:
 
 test-short:
 	go test ./... -short -count=1
+
+# End-to-end suite: builds the binary and drives real git repos, services, the
+# worktree hook, and reconcile. Excluded from `test`; run explicitly.
+e2e:
+	go test -tags e2e ./e2e/... -count=1 -v
 
 lint:
 	golangci-lint run ./...
