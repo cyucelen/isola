@@ -173,10 +173,18 @@ API_URL      = "${services.api.url}"     # http://feat-login.myapp.localhost:800
 DATABASE_URL = "${accessories.database.url}"   # postgres://.../myapp_feat-login
 ```
 
-Available references: `${services.<name>.url}`, `${services.<name>.port}`,
-`${accessories.<name>.url}`, and `${proxy.ca_cert}`. isola also injects built-ins
-into every process: `PORT`, `ISOLA_BRANCH`, `ISOLA_BRANCH_SLUG`, `ISOLA_SERVICE`,
-and per-sibling `ISOLA_<SERVICE>_URL` / `ISOLA_<SERVICE>_PORT`.
+Available references: `${services.<name>.url}`, `${services.<name>.direct_url}`,
+`${services.<name>.port}`, `${accessories.<name>.url}`, and `${proxy.ca_cert}`.
+isola also injects built-ins into every process: `PORT`, `ISOLA_BRANCH`,
+`ISOLA_BRANCH_SLUG`, `ISOLA_SERVICE`, and per-sibling `ISOLA_<SERVICE>_URL`,
+`ISOLA_<SERVICE>_DIRECT_URL`, and `ISOLA_<SERVICE>_PORT`.
+
+Two ways to reach a sibling. `${services.<name>.url}` (`ISOLA_<SERVICE>_URL`)
+routes through the proxy, so it needs `*.localhost` to resolve: use it for links
+the browser opens. `${services.<name>.direct_url}` (`ISOLA_<SERVICE>_DIRECT_URL`)
+is a direct `http://127.0.0.1:<port>` to the backend: use it for server-side
+calls between services, since it needs no DNS and works on every OS. See
+[Troubleshooting](docs/troubleshooting.md#server-side-calls-between-services).
 
 Each service's env goes into the **process** and, unless disabled, its **env
 file** (`.env`), so tools that read `.env` directly get the same values. See the
@@ -242,6 +250,7 @@ case.
 | `isola down`            | Stop services for the current worktree                          |
 | `isola down --all`      | Stop services for all worktrees                                 |
 | `isola down --prune`    | Stop services, then drop deleted worktrees' state and databases |
+| `isola destroy`         | Stop the current worktree's services and drop its database (opposite of `up`) |
 | `isola ls`              | List all worktrees, services, ports, status, and URLs           |
 | `isola logs [worktree]` | Tail a worktree's service logs                                  |
 | `isola accessory`       | Manage per-worktree databases: `ls`, `up`, `reset`, `drop`      |
@@ -249,11 +258,55 @@ case.
 | `isola proxy start`     | Start the machine-wide reverse proxy (auto-started by `up`)     |
 | `isola proxy stop`      | Stop the reverse proxy                                          |
 | `isola trust`           | Install the CA certificate into the system trust store          |
+| `isola hooks install`   | Install a git hook that runs `isola up` when a worktree is created (`--shared` to commit it) |
+| `isola orca`            | Add `isola up` to Orca's `orca.yaml` worktree setup hook        |
 | `isola doctor`          | Run diagnostic checks on config and ports                       |
 | `isola version`         | Print version information                                       |
 
 
 HTTPS is enabled per project with `[proxy] https = true` in `.isola.toml` (not a flag).
+
+## Worktree automation
+
+Each worktree's environment needs to be started (`isola up`) and, when the
+worktree goes away, stopped. Do that by hand, or have isola do it automatically.
+
+### Manual
+
+Run `isola up` in the worktree to start it, `isola down` to stop it:
+
+```bash
+git worktree add ../my-feature -b my-feature
+cd ../my-feature && isola up
+```
+
+### Automatic (git hook)
+
+Install a `post-checkout` hook once and every new worktree comes up on its own:
+
+```bash
+isola hooks install            # this clone only
+isola hooks install --shared   # commit .githooks + set core.hooksPath for the team
+```
+
+Every worktree tool (Orca, Herd, your editor, plain `git worktree add`) goes
+through `git worktree add`, which fires `post-checkout`, so this single hook
+covers them all. It runs `isola up` only on a **new** worktree (never on a branch
+switch) and does nothing when there is no `.isola.toml`.
+
+- **Skip once:** `ISOLA_NO_UP=1 git worktree add ...`
+- **Orca:** `isola orca` adds `isola up` to Orca's `orca.yaml` setup hook. If the
+  git hook is also installed it stands down when `orca.yaml` runs isola, so
+  nothing runs twice. No teardown hook is needed (see below).
+- **Inspect or remove:** `isola hooks status`, `isola hooks uninstall`.
+
+### When a worktree is removed
+
+Git has no worktree-removal hook, so isola reconciles: a removed worktree is torn
+down automatically, its services stopped and the per-worktree databases it
+provisioned dropped, on the next `isola up` and by the shared proxy in the
+background. It only ever drops resources isola created. `isola down --prune` runs
+the same teardown on demand, and `isola destroy` tears down the current worktree.
 
 ## How It Works
 

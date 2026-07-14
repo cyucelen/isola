@@ -29,12 +29,14 @@ isola doctor                   # health checks
 
 Service URLs (one machine-wide proxy): `http://<branch-slug>.<project>.localhost:<proxy_port>`.
 Built-in env: `PORT`, `ISOLA_BRANCH`, `ISOLA_BRANCH_SLUG`, `ISOLA_SERVICE`,
-`ISOLA_<SVC>_PORT`, `ISOLA_<SVC>_URL`. Declare your own per service under
-`[services.<name>].env`, referencing `${accessories.<name>.url}`,
-`${services.<name>.url}`, or `${services.<name>.port}`; each service's env is
-delivered to its process and (per `[env_file]`) its env file.
-On `up`, gitignored files matching `copy_files` (default `[".env"]`, a top-level
-key) are copied from the main worktree into each worktree, never overwriting.
+`ISOLA_<SVC>_PORT`, `ISOLA_<SVC>_URL`, `ISOLA_<SVC>_DIRECT_URL`. Declare your own
+per service under `[services.<name>].env`, referencing `${accessories.<name>.url}`,
+`${services.<name>.url}`, `${services.<name>.direct_url}`, or
+`${services.<name>.port}`; each service's env is delivered to its process and
+(per `[env_file]`) its env file (see references/dev.md for `.url` vs
+`.direct_url`). On `up`, gitignored files matching `copy_files` (default
+`[".env"]`, a top-level key) are copied from the main worktree into each
+worktree, never overwriting.
 
 ## References
 
@@ -44,5 +46,5 @@ Read the file that matches the task (don't load them all up front):
 - **references/databases.md** — per-worktree Postgres via `[accessories]` and `isola accessory …`.
 - **references/troubleshoot.md** — failed starts, ports, proxy/slug issues, database errors.
 
-To set up isola in a repo for the first time (write `.isola.toml`), use the
-separate **isola-init** skill.
+This skill covers running an already-configured repo. First-time setup (writing
+`.isola.toml`) is the separate **isola-init** skill.

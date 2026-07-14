@@ -9,15 +9,20 @@ Set up isola for **this** repository, then verify it. Follow
 **references/setup.md** for the full walkthrough; work from what the repo
 actually uses, don't assume a language, framework, or OS:
 
-1. Install the `isola` CLI if it isn't on `PATH` (`command -v isola`), following
-   [references/install.md](references/install.md).
-2. Discover the long-running dev processes (from `package.json`, `Makefile`,
-   `Procfile`, `docker-compose.yml`, etc.).
-3. `isola init`, then write `.isola.toml`: a `[services.<name>]` per process
-   (each command must bind `$PORT`), per-service `env` (referencing
-   `${accessories.<name>.url}` / `${services.<name>.url}` as needed), and any
-   per-worktree database under `[accessories.<name>]`.
-4. Verify with `isola up` then `isola ls`, and open a URL to confirm.
+1. Install the `isola` CLI if it isn't on `PATH` (`command -v isola`).
+2. Discover the repo's long-running dev processes.
+3. `isola init`, then write `.isola.toml`: services, per-service env, and any
+   per-worktree databases.
+4. Verify with `isola up` and `isola ls`.
 
-To operate isola day to day afterwards (up/down/ls/dash/proxy/logs, databases,
-troubleshooting), use the separate **isola** skill.
+## References
+
+Read the file that matches the step (don't load them all up front):
+
+- **references/install.md** — installing the `isola` CLI (step 1).
+- **references/setup.md** — the full setup walkthrough (steps 2-4): discovering
+  dev processes; writing services, per-service env `${...}` references (including
+  `.url` vs `.direct_url`), and accessories; and verifying.
+
+This skill only covers first-time setup. The separate **isola** skill covers
+running isola afterwards.

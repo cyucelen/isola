@@ -42,6 +42,13 @@ branch `feature/auth`, `proxy_port = 3000`, the frontend is at
 the bare `<branch>.localhost` form is not routed. Set `project` in `.isola.toml`
 to override the default (the repo's directory name).
 
+Two ways to reach a sibling from another service's env. `${services.<name>.url}`
+(or `ISOLA_<SVC>_URL`) is the proxy URL above; it needs `*.localhost` to resolve
+(browsers always do; on Linux only systemd-resolved/dnsmasq setups do), so use it
+for browser links. `${services.<name>.direct_url}` (or `ISOLA_<SVC>_DIRECT_URL`)
+is a direct `http://127.0.0.1:<port>` to the backend that needs no DNS and works
+on every OS; use it for server-side calls between services.
+
 The one proxy serves every project and runs until you stop it (machine-wide):
 
 ```bash

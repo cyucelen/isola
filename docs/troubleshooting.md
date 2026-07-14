@@ -28,6 +28,23 @@ failures and their fixes.
 - Check that the target service is actually running with `isola ls`.
 - URLs are project-qualified: access via `http://<branch-slug>.<project>.localhost:<proxy_port>` (a bare `<branch>.localhost` is not routed). `<project>` defaults to the repo's directory name; set it with `project` in `.isola.toml`.
 
+## Server-side calls between services
+
+Browsers resolve `*.localhost` on every OS, so the user-facing app always loads.
+A service that calls a sibling **in its own process** (server-side rendering, a
+backend-for-frontend, one backend calling another) instead uses the OS resolver,
+and only macOS and Linux with `systemd-resolved` (or dnsmasq) resolve
+`*.localhost` to loopback. On other Linux setups, containers, and CI,
+`${services.<name>.url}` will not resolve from inside a service.
+
+For server-to-server calls, use the direct loopback form, which needs no DNS and
+works everywhere: `${services.<name>.direct_url}` in config, or the injected
+`ISOLA_<SERVICE>_DIRECT_URL` at runtime (both resolve to `http://127.0.0.1:<port>`;
+`${services.<name>.port}` gives the bare port if you need it). Keep
+`${services.<name>.url}` for URLs the browser opens. To fix resolution
+machine-wide instead, `systemd-resolved` v245+ already handles `*.localhost`;
+otherwise a dnsmasq rule `address=/localhost/127.0.0.1` does it.
+
 ## HTTPS issues
 
 - Auto-generated certificates are stored in `.isola/certs/` when HTTPS is on.

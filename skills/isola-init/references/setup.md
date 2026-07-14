@@ -49,13 +49,16 @@ isola-provided sources with `${...}`:
 
 ```toml
 [services.web.env]
-NODE_ENV = "development"
-API_URL  = "${services.api.url}"           # a sibling service's proxy URL
+API_URL        = "${services.api.url}"          # sibling's proxy URL (browser)
+API_DIRECT_URL = "${services.api.direct_url}"   # sibling's loopback URL (server-side)
 ```
 
 Reference namespace: `accessories.<name>.url`, `services.<name>.url`,
-`services.<name>.port`, and `proxy.ca_cert` (the dev CA path, HTTPS only; see
-step 7). isola delivers each service's env into its **process**
+`services.<name>.direct_url`, `services.<name>.port`, and `proxy.ca_cert` (the
+dev CA path, HTTPS only; see step 7). `services.<name>.url` routes through the
+proxy (use for browser links); `services.<name>.direct_url` is a direct
+`http://127.0.0.1:<port>` (use for server-side calls between services: no DNS,
+works on every OS). isola delivers each service's env into its **process**
 and (unless disabled) into its **env file**, so tools that read `.env` /
 `.env.local` directly get the same isolated values. A service can set its own
 `env_file = "..."` (relative to `dir`); the default is `.env`.

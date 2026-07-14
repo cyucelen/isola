@@ -62,12 +62,15 @@ Env values can reference isola-provided sources with `${...}`:
 
 | Reference                | Resolves to                                              |
 | ------------------------ | -------------------------------------------------------- |
-| `${accessories.<name>.url}` | the accessory's connection string                     |
-| `${services.<name>.url}`    | a sibling's proxy URL (`<slug>.<project>.localhost:<proxy_port>`) |
-| `${services.<name>.port}`   | a sibling's allocated backend port                    |
-| `${proxy.ca_cert}`          | path to isola's dev CA (HTTPS only; empty otherwise), e.g. `NODE_EXTRA_CA_CERTS = "${proxy.ca_cert}"` |
+| `${accessories.<name>.url}`    | the accessory's connection string                     |
+| `${services.<name>.url}`       | a sibling's proxy URL (`<slug>.<project>.localhost:<proxy_port>`); routes through the proxy, so needs `*.localhost` to resolve (use for browser links) |
+| `${services.<name>.direct_url}` | a sibling's direct loopback URL (`http://127.0.0.1:<port>`); no DNS, no proxy (use for server-side calls between services) |
+| `${services.<name>.port}`      | a sibling's allocated backend port                    |
+| `${proxy.ca_cert}`             | path to isola's dev CA (HTTPS only; empty otherwise), e.g. `NODE_EXTRA_CA_CERTS = "${proxy.ca_cert}"` |
 
-Plus the isola built-ins (`PORT`, `ISOLA_*`) and your shell. A bare `$` is left
+Plus the isola built-ins (`PORT`, `ISOLA_*`) and your shell. The per-sibling
+built-ins mirror the references above: `ISOLA_<SERVICE>_URL`,
+`ISOLA_<SERVICE>_DIRECT_URL`, and `ISOLA_<SERVICE>_PORT`. A bare `$` is left
 literal, so a value like `p$ssw0rd` survives unchanged. There is no global
 `[env]`; declare env per service.
 
