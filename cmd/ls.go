@@ -8,6 +8,7 @@ import (
 	"sort"
 	"text/tabwriter"
 
+	"github.com/cyucelen/isola/internal/browser"
 	"github.com/cyucelen/isola/internal/config"
 	"github.com/cyucelen/isola/internal/git"
 	"github.com/cyucelen/isola/internal/logging"
@@ -55,12 +56,8 @@ Use --json to output the result as a JSON array for scripting and automation.`,
 			return fmt.Errorf("creating state store: %w", err)
 		}
 
-		var st *state.State
-		if err := store.WithLock(func() error {
-			var e error
-			st, e = store.Load()
-			return e
-		}); err != nil {
+		st, err := store.LoadLocked()
+		if err != nil {
 			logging.Warn("failed to load state: %v", err)
 		}
 		if st == nil {
@@ -85,13 +82,7 @@ Use --json to output the result as a JSON array for scripting and automation.`,
 		entries := buildLsEntries(trees, serviceNames, st, cfg, daemonRunning)
 
 		// Detect orphaned branches: in state but not in worktree list.
-		activeBranches := make(map[string]bool, len(trees))
-		for _, t := range trees {
-			if !t.IsBare {
-				activeBranches[t.Branch] = true
-			}
-		}
-		orphanBranches := state.OrphanedBranches(st, activeBranches)
+		orphanBranches := state.OrphanedBranches(st, git.ActiveBranches(trees))
 		sort.Strings(orphanBranches)
 		for _, branch := range orphanBranches {
 			for _, svcName := range serviceNames {
@@ -114,10 +105,7 @@ Use --json to output the result as a JSON array for scripting and automation.`,
 
 func buildLsEntries(trees []git.Worktree, serviceNames []string, st *state.State, c *config.Config, proxyRunning bool) []lsEntry {
 	// The scheme follows this project's proxy config.
-	scheme := "http"
-	if c != nil && c.Proxy.HTTPS {
-		scheme = "https"
-	}
+	scheme := config.Scheme(c != nil && c.Proxy.HTTPS)
 
 	entries := make([]lsEntry, 0)
 	for _, tree := range trees {
@@ -159,7 +147,7 @@ func buildLsEntries(trees []git.Worktree, serviceNames []string, st *state.State
 				}
 			}
 			if e.Port > 0 {
-				e.DirectURL = fmt.Sprintf("http://localhost:%d", e.Port)
+				e.DirectURL = browser.DirectURL(e.Port)
 			}
 
 			entries = append(entries, e)

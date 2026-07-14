@@ -16,6 +16,14 @@ func BuildURL(scheme, slug, project string, proxyPort int) string {
 	return fmt.Sprintf("%s://%s.localhost:%d", scheme, host, proxyPort)
 }
 
+// DirectURL constructs the loopback URL that reaches a service's backend
+// directly, bypassing the proxy and DNS entirely, e.g. "http://127.0.0.1:3000".
+// It uses 127.0.0.1 rather than "localhost" to match how the proxy dials
+// backends and to avoid resolving to ::1 when a service listens only on IPv4.
+func DirectURL(port int) string {
+	return fmt.Sprintf("http://127.0.0.1:%d", port)
+}
+
 // Open opens the given URL in the default browser.
 func Open(url string) error {
 	switch runtime.GOOS {

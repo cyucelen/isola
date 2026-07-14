@@ -138,6 +138,16 @@ func TestBuildEnv(t *testing.T) {
 			t.Errorf("ISOLA_API_URL = %q, want %q", lookup["ISOLA_API_URL"], "http://feature-auth.localhost:8000")
 		}
 	})
+
+	t.Run("cross-service direct URLs", func(t *testing.T) {
+		// Loopback URLs to a sibling's backend port, DNS-free and proxy-free.
+		if lookup["ISOLA_WEB_DIRECT_URL"] != "http://127.0.0.1:3150" {
+			t.Errorf("ISOLA_WEB_DIRECT_URL = %q, want %q", lookup["ISOLA_WEB_DIRECT_URL"], "http://127.0.0.1:3150")
+		}
+		if lookup["ISOLA_API_DIRECT_URL"] != "http://127.0.0.1:8150" {
+			t.Errorf("ISOLA_API_DIRECT_URL = %q, want %q", lookup["ISOLA_API_DIRECT_URL"], "http://127.0.0.1:8150")
+		}
+	})
 }
 
 func TestBuildEnvInterpolation(t *testing.T) {
@@ -572,5 +582,41 @@ func TestBuildEnvAccessoryRefVerbatim(t *testing.T) {
 	}
 	if got != "postgres://u:p${x}@host:5432/db" {
 		t.Errorf("DATABASE_URL = %q; want the accessory URL verbatim (inner ${x} not re-expanded)", got)
+	}
+}
+
+func TestBuildEnvServiceReferences(t *testing.T) {
+	runner := &Runner{
+		config: RunnerConfig{
+			ServiceName: "web",
+			BranchSlug:  "feature-auth",
+			Project:     "myapp",
+			Command:     "npm start",
+			Port:        3150,
+			Env: map[string]string{
+				"API_URL":        "${services.api.url}",
+				"API_DIRECT_URL": "${services.api.direct_url}",
+				"API_PORT":       "${services.api.port}",
+			},
+			AllServicePorts:      map[string]int{"api": 8150},
+			AllServiceProxyPorts: map[string]int{"api": 8000},
+		},
+	}
+	lookup := map[string]string{}
+	for _, e := range runner.buildEnv() {
+		if k, v, ok := strings.Cut(e, "="); ok {
+			lookup[k] = v
+		}
+	}
+	// .url routes through the proxy (project-qualified, needs *.localhost);
+	// .direct_url is the DNS-free loopback form; .port is the raw backend port.
+	if lookup["API_URL"] != "http://feature-auth.myapp.localhost:8000" {
+		t.Errorf("API_URL = %q", lookup["API_URL"])
+	}
+	if lookup["API_DIRECT_URL"] != "http://127.0.0.1:8150" {
+		t.Errorf("API_DIRECT_URL = %q, want http://127.0.0.1:8150", lookup["API_DIRECT_URL"])
+	}
+	if lookup["API_PORT"] != "8150" {
+		t.Errorf("API_PORT = %q", lookup["API_PORT"])
 	}
 }

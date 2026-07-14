@@ -2,11 +2,9 @@ package process
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -14,6 +12,7 @@ import (
 	"github.com/cyucelen/isola/internal/browser"
 	"github.com/cyucelen/isola/internal/expand"
 	"github.com/cyucelen/isola/internal/logging"
+	"github.com/cyucelen/isola/internal/port"
 )
 
 const stopTimeout = 10 * time.Second
@@ -208,20 +207,11 @@ func IsProcessRunning(pid int) bool {
 	return err == nil
 }
 
-// IsPortAvailable reports whether a TCP port is free to use. It treats a port as
-// taken if any server is accepting connections on it via loopback (IPv4 or
-// IPv6), detected by dialing rather than binding: a bind-based check is defeated
-// by SO_REUSEADDR and address family, so a backend already held on 0.0.0.0 or
-// [::] (e.g. another isola project's service) would be missed.
-func IsPortAvailable(port int) bool {
-	for _, host := range []string{"127.0.0.1", "::1"} {
-		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 200*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			return false
-		}
-	}
-	return true
+// IsPortAvailable reports whether a TCP port is free to use. It delegates to
+// port.Available (dial-based, so a backend held on 0.0.0.0 or [::] by another
+// isola project is still detected).
+func IsPortAvailable(p int) bool {
+	return port.Available(p)
 }
 
 // scheme returns the proxy scheme, defaulting to http.
@@ -241,7 +231,12 @@ func (r *Runner) builtins() map[string]string {
 		"ISOLA_SERVICE":     r.config.ServiceName,
 	}
 	for svcName, svcPort := range r.config.AllServicePorts {
-		m["ISOLA_"+strings.ToUpper(svcName)+"_PORT"] = fmt.Sprintf("%d", svcPort)
+		up := strings.ToUpper(svcName)
+		m["ISOLA_"+up+"_PORT"] = fmt.Sprintf("%d", svcPort)
+		// Loopback URL that reaches the sibling's backend directly, bypassing the
+		// proxy and DNS. Portable across OSes for server-side calls; the proxy
+		// URL below needs *.localhost to resolve.
+		m["ISOLA_"+up+"_DIRECT_URL"] = browser.DirectURL(svcPort)
 	}
 	for svcName, proxyPort := range r.config.AllServiceProxyPorts {
 		m["ISOLA_"+strings.ToUpper(svcName)+"_URL"] = browser.BuildURL(r.scheme(), r.config.BranchSlug, r.config.Project, proxyPort)
@@ -264,6 +259,12 @@ func (r *Runner) resolver(builtins map[string]string) func(string) string {
 			}
 		}
 		if rest, ok := strings.CutPrefix(name, "services."); ok {
+			if svc, ok := strings.CutSuffix(rest, ".direct_url"); ok {
+				if p, ok := r.config.AllServicePorts[svc]; ok {
+					return browser.DirectURL(p)
+				}
+				return ""
+			}
 			if svc, ok := strings.CutSuffix(rest, ".url"); ok {
 				if p, ok := r.config.AllServiceProxyPorts[svc]; ok {
 					return browser.BuildURL(r.scheme(), r.config.BranchSlug, r.config.Project, p)
