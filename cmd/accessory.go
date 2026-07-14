@@ -39,16 +39,12 @@ var accessoryLsCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("listing worktrees: %w", err)
 		}
-		store, err := accessoryStore()
+		store, err := openStateStore()
 		if err != nil {
 			return err
 		}
-		var st *state.State
-		if err := store.WithLock(func() error {
-			var e error
-			st, e = store.Load()
-			return e
-		}); err != nil {
+		st, err := store.LoadLocked()
+		if err != nil {
 			return fmt.Errorf("loading state: %w", err)
 		}
 
@@ -59,7 +55,7 @@ var accessoryLsCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-		_, _ = fmt.Fprintln(w, "WORKTREE\tACCESSORY\tKIND\tRESOURCE\tREADY")
+		_, _ = fmt.Fprintln(w, "WORKTREE\tACCESSORY\tKIND\tRESOURCE\tPROVISIONED")
 		for _, tree := range trees {
 			if tree.IsBare {
 				continue
@@ -121,30 +117,34 @@ var accessoryDropCmd = &cobra.Command{
 	Short: "Drop the current worktree's accessories",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return accessoryForEach(args, func(ctx context.Context, store *state.FileStore, wt accessory.WorktreeInfo, name string, a accessory.Accessory) error {
-			var rec *state.AccessoryState
-			if err := store.WithLock(func() error {
-				st, e := store.Load()
-				if e != nil {
-					return e
-				}
-				rec = state.GetAccessoryState(st, wt.Branch, name)
-				return nil
-			}); err != nil {
-				return err
-			}
-			if rec == nil {
-				logging.Info("No %s resource recorded for %s; nothing to drop", name, wt.Branch)
-				return nil
-			}
-			if err := a.Drop(ctx, rec.Handle); err != nil {
-				return err
-			}
-			forgetAccessory(store, wt.Branch, name)
-			logging.Info("Dropped %s (%s) for %s", name, rec.Kind, wt.Branch)
-			return nil
-		})
+		return accessoryForEach(args, dropAccessory)
 	},
+}
+
+// dropAccessory tears down one accessory's recorded resource for a worktree and
+// forgets its state. Shared by `isola accessory drop` and `isola destroy`.
+func dropAccessory(ctx context.Context, store *state.FileStore, wt accessory.WorktreeInfo, name string, a accessory.Accessory) error {
+	var rec *state.AccessoryState
+	if err := store.WithLock(func() error {
+		st, e := store.Load()
+		if e != nil {
+			return e
+		}
+		rec = state.GetAccessoryState(st, wt.Branch, name)
+		return nil
+	}); err != nil {
+		return err
+	}
+	if rec == nil {
+		logging.Info("No %s resource recorded for %s; nothing to drop", name, wt.Branch)
+		return nil
+	}
+	if err := a.Drop(ctx, rec.Handle); err != nil {
+		return err
+	}
+	forgetAccessory(store, wt.Branch, name)
+	logging.Info("Dropped %s (%s) for %s", name, rec.Kind, wt.Branch)
+	return nil
 }
 
 // accessoryForEach runs fn for each configured accessory (optionally filtered by
@@ -174,7 +174,7 @@ func accessoryForEach(args []string, fn func(context.Context, *state.FileStore, 
 		logging.Info("No accessories configured in %s.", ".isola.toml")
 		return nil
 	}
-	store, err := accessoryStore()
+	store, err := openStateStore()
 	if err != nil {
 		return err
 	}
@@ -195,7 +195,9 @@ func accessoryForEach(args []string, fn func(context.Context, *state.FileStore, 
 	return firstErr
 }
 
-func accessoryStore() (*state.FileStore, error) {
+// openStateStore opens the repo's state store at <stateRoot>/.isola. It is the
+// single constructor the commands share instead of each inlining the path.
+func openStateStore() (*state.FileStore, error) {
 	store, err := state.NewFileStore(filepath.Join(stateRoot, ".isola"))
 	if err != nil {
 		return nil, fmt.Errorf("creating state store: %w", err)

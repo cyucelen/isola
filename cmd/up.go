@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cyucelen/isola/internal/cert"
 	"github.com/cyucelen/isola/internal/config"
 	"github.com/cyucelen/isola/internal/copyfiles"
 	"github.com/cyucelen/isola/internal/git"
@@ -15,7 +16,6 @@ import (
 	"github.com/cyucelen/isola/internal/process"
 	"github.com/cyucelen/isola/internal/proxy"
 	"github.com/cyucelen/isola/internal/registry"
-	"github.com/cyucelen/isola/internal/state"
 	"github.com/cyucelen/isola/internal/trust"
 	"github.com/spf13/cobra"
 )
@@ -42,10 +42,9 @@ var upCmd = &cobra.Command{
 			}
 		}
 
-		stateDir := filepath.Join(stateRoot, ".isola")
-		store, err := state.NewFileStore(stateDir)
+		store, err := openStateStore()
 		if err != nil {
-			return fmt.Errorf("creating state store: %w", err)
+			return err
 		}
 
 		portReg := port.NewRegistry(store, cfg)
@@ -120,6 +119,22 @@ var upCmd = &cobra.Command{
 			logging.Info("✓ already up to date; all services running")
 		}
 
+		// Tear down worktrees that were removed (git has no worktree-removal
+		// hook): stop their services and drop the databases they provisioned.
+		if allTrees, lerr := git.ListWorktrees(cwd); lerr == nil {
+			active := git.ActiveBranches(allTrees)
+			if res, rerr := process.ReconcileOrphans(cfg, store, active); rerr != nil {
+				logging.Warn("reconciling removed worktrees: %v", rerr)
+			} else {
+				if len(res.StoppedServices) > 0 {
+					logging.Info("Stopped %d orphaned service(s) from removed worktrees: %s", len(res.StoppedServices), strings.Join(res.StoppedServices, ", "))
+				}
+				if len(res.DroppedAccessories) > 0 {
+					logging.Info("Dropped %d database(s) from removed worktrees: %s", len(res.DroppedAccessories), strings.Join(res.DroppedAccessories, ", "))
+				}
+			}
+		}
+
 		// Register this project with the shared proxy and ensure the machine-wide
 		// daemon is running (unless disabled), so services are reachable at
 		// <branch>.<project>.localhost without a separate command.
@@ -158,17 +173,13 @@ var upCmd = &cobra.Command{
 					// Only advertise reachability when something is actually up;
 					// printing it after a failed start reads as false success.
 					if totalStarted > 0 || totalRunning > 0 {
-						scheme := "http"
-						if cfg.Proxy.HTTPS {
-							scheme = "https"
-						}
-						logging.Info("Reach services at %s://<branch-slug>.%s.localhost:<proxy_port>", scheme, cfg.Project)
+						logging.Info("Reach services at %s://<branch-slug>.%s.localhost:<proxy_port>", config.Scheme(cfg.Proxy.HTTPS), cfg.Project)
 					}
 
 					// With HTTPS, trust the shared CA so browsers don't warn. Never
 					// blocks `up`; only runs on an interactive terminal.
 					if derr == nil && cfg.Proxy.HTTPS && cfg.AutoTrustEnabled() {
-						ensureHTTPSTrust(filepath.Join(reg.Dir(), "certs", "ca.crt"))
+						ensureHTTPSTrust(cert.CAPath(filepath.Join(reg.Dir(), "certs")))
 					}
 				}
 			}

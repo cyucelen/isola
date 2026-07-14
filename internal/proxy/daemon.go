@@ -15,7 +15,9 @@ import (
 
 	"github.com/cyucelen/isola/internal/cert"
 	"github.com/cyucelen/isola/internal/config"
+	"github.com/cyucelen/isola/internal/git"
 	"github.com/cyucelen/isola/internal/logging"
+	"github.com/cyucelen/isola/internal/process"
 	"github.com/cyucelen/isola/internal/registry"
 	"github.com/cyucelen/isola/internal/state"
 )
@@ -23,6 +25,12 @@ import (
 // syncInterval is how often the daemon re-reads the registry to pick up ports
 // newly registered by projects that started after it did.
 const syncInterval = 1 * time.Second
+
+// reconcileInterval is how often the daemon tears down worktrees that were
+// removed (git has no worktree-removal hook, so this is a background sweep
+// rather than an event): it stops their services and drops the databases they
+// provisioned.
+const reconcileInterval = 30 * time.Second
 
 // Daemon is the single machine-wide reverse proxy. It binds the union of every
 // registered project's proxy ports and routes <slug>.<project>.localhost to that
@@ -62,6 +70,8 @@ func (d *Daemon) Serve(ctx context.Context) error {
 	}
 	ticker := time.NewTicker(syncInterval)
 	defer ticker.Stop()
+	reconcile := time.NewTicker(reconcileInterval)
+	defer reconcile.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -71,6 +81,45 @@ func (d *Daemon) Serve(ctx context.Context) error {
 			if err := d.sync(); err != nil {
 				logging.Warn("proxy: registry sync failed: %v", err)
 			}
+		case <-reconcile.C:
+			d.reconcileOrphans()
+		}
+	}
+}
+
+// reconcileOrphans tears down worktrees that have been removed, across every
+// registered project: it stops their services and drops the databases they
+// provisioned. It only touches resources isola recorded creating.
+func (d *Daemon) reconcileOrphans() {
+	projects, err := d.reg.List()
+	if err != nil {
+		logging.Warn("proxy: cannot list projects to reconcile: %v", err)
+		return
+	}
+	for _, p := range projects {
+		repoRoot := filepath.Dir(p.StateDir)
+		trees, err := git.ListWorktrees(repoRoot)
+		if err != nil {
+			continue // repo moved/removed; leave it for `isola down --prune`
+		}
+		cfg, err := config.Load(repoRoot)
+		if err != nil {
+			continue
+		}
+		store, err := state.NewFileStore(p.StateDir)
+		if err != nil {
+			continue
+		}
+		res, err := process.ReconcileOrphans(cfg, store, git.ActiveBranches(trees))
+		if err != nil {
+			logging.Warn("proxy: reconcile %s: %v", p.Name, err)
+			continue
+		}
+		for _, id := range res.StoppedServices {
+			logging.Info("proxy: stopped orphaned service %s in %s (worktree removed)", id, p.Name)
+		}
+		for _, id := range res.DroppedAccessories {
+			logging.Info("proxy: dropped orphaned database %s in %s (worktree removed)", id, p.Name)
 		}
 	}
 }
@@ -114,10 +163,7 @@ func (d *Daemon) listenLocked(port int, https bool) error {
 		ln = tls.NewListener(ln, &tls.Config{GetCertificate: getCert})
 	}
 	d.servers[port] = srv
-	scheme := "http"
-	if https {
-		scheme = "https"
-	}
+	scheme := config.Scheme(https)
 	logging.Info("proxy: serving %s on :%d", scheme, port)
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -148,8 +194,12 @@ func (d *Daemon) handler(port int) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		slug, project := ParseHost(r.Host)
 		if project == "" {
-			writeProxyError(w, r, http.StatusNotFound, "Project-qualified URL needed",
-				fmt.Sprintf("Use `http://<branch>.<project>.localhost:%d`\nThe bare `<branch>.localhost` form is not routed.", port))
+			detail := fmt.Sprintf("Use a project-qualified URL: `http://<branch>.<project>.localhost:%d`", port)
+			if slug != "" {
+				// A bare <slug>.localhost carries no project, so it can't be routed.
+				detail = fmt.Sprintf("The bare `%s.localhost` form is not routed; use `http://%s.<project>.localhost:%d`.", slug, slug, port)
+			}
+			writeProxyError(w, r, http.StatusNotFound, "Project-qualified URL needed", detail)
 			return
 		}
 		res, err := d.resolverFor(project)

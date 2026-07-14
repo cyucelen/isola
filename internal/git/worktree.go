@@ -51,6 +51,19 @@ func DetectSlugCollisions(trees []Worktree) map[string][]string {
 	return collisions
 }
 
+// ActiveBranches returns the set of branches that currently have a (non-bare)
+// worktree on disk. It is the input to reconciling orphaned services: any
+// branch still recorded in state but absent here has lost its worktree.
+func ActiveBranches(trees []Worktree) map[string]bool {
+	active := make(map[string]bool, len(trees))
+	for _, t := range trees {
+		if !t.IsBare {
+			active[t.Branch] = true
+		}
+	}
+	return active
+}
+
 // ListWorktrees returns all worktrees for the repo containing dir.
 func ListWorktrees(dir string) ([]Worktree, error) {
 	cmd := gitCmd(dir, "worktree", "list", "--porcelain")
