@@ -40,60 +40,27 @@ func GetLevel() Level {
 	return std.level
 }
 
-// IsVerbose returns true if verbose or debug output is enabled.
-func IsVerbose() bool {
-	return GetLevel() >= LevelVerbose
-}
-
-// IsDebug returns true if debug output is enabled.
-func IsDebug() bool {
-	return GetLevel() >= LevelDebug
-}
-
-// IsQuiet returns true if quiet mode is enabled.
-func IsQuiet() bool {
-	return GetLevel() <= LevelQuiet
+// emit writes prefix+format+args to the log output when the current level is at
+// or above threshold. Error passes LevelQuiet (the floor) so it always prints.
+func emit(threshold Level, prefix, format string, args ...any) {
+	std.mu.Lock()
+	defer std.mu.Unlock()
+	if std.level >= threshold {
+		_, _ = fmt.Fprintf(std.out, prefix+format+"\n", args...)
+	}
 }
 
 // Info prints a message at normal level.
-func Info(format string, args ...any) {
-	std.mu.Lock()
-	defer std.mu.Unlock()
-	if std.level >= LevelNormal {
-		_, _ = fmt.Fprintf(std.out, format+"\n", args...)
-	}
-}
+func Info(format string, args ...any) { emit(LevelNormal, "", format, args...) }
 
 // Verbose prints a message at verbose level.
-func Verbose(format string, args ...any) {
-	std.mu.Lock()
-	defer std.mu.Unlock()
-	if std.level >= LevelVerbose {
-		_, _ = fmt.Fprintf(std.out, format+"\n", args...)
-	}
-}
+func Verbose(format string, args ...any) { emit(LevelVerbose, "", format, args...) }
 
 // Debug prints a message at debug level.
-func Debug(format string, args ...any) {
-	std.mu.Lock()
-	defer std.mu.Unlock()
-	if std.level >= LevelDebug {
-		_, _ = fmt.Fprintf(std.out, "[debug] "+format+"\n", args...)
-	}
-}
+func Debug(format string, args ...any) { emit(LevelDebug, "[debug] ", format, args...) }
 
 // Warn always prints unless in quiet mode.
-func Warn(format string, args ...any) {
-	std.mu.Lock()
-	defer std.mu.Unlock()
-	if std.level > LevelQuiet {
-		_, _ = fmt.Fprintf(std.out, "warning: "+format+"\n", args...)
-	}
-}
+func Warn(format string, args ...any) { emit(LevelNormal, "warning: ", format, args...) }
 
 // Error always prints.
-func Error(format string, args ...any) {
-	std.mu.Lock()
-	defer std.mu.Unlock()
-	_, _ = fmt.Fprintf(std.out, "error: "+format+"\n", args...)
-}
+func Error(format string, args ...any) { emit(LevelQuiet, "error: ", format, args...) }

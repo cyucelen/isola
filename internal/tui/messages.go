@@ -30,13 +30,7 @@ type ActionResultMsg struct {
 	IsError bool
 }
 
-// ProxyStatusMsg carries the proxy status.
-type ProxyStatusMsg struct {
-	Running bool
-	Ports   []int
-}
-
-// tickCmd returns a command that sends a TickMsg after 2 seconds.
+// tickCmd returns a command that sends a TickMsg after pollInterval.
 func tickCmd() tea.Cmd {
 	return tea.Tick(pollInterval, func(_ time.Time) tea.Msg {
 		return TickMsg{}

@@ -123,10 +123,9 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 
 	// The scheme for ISOLA_<SVC>_URL follows this project's proxy config; the
 	// shared daemon serves the project's ports over that scheme.
-	proxyScheme := "http"
+	proxyScheme := config.Scheme(m.cfg.Proxy.HTTPS)
 	caCertPath := ""
 	if m.cfg.Proxy.HTTPS {
-		proxyScheme = "https"
 		caCertPath = m.ensureCACert()
 	}
 
@@ -284,7 +283,7 @@ func (m *Manager) runningPID(branch, service string) int {
 			return err
 		}
 		ss := state.GetServiceState(st, branch, service)
-		if ss != nil && ss.Status == state.StatusRunning && ss.PID > 0 && IsProcessRunning(ss.PID) {
+		if liveService(ss) {
 			pid = ss.PID
 		}
 		return nil
@@ -442,7 +441,7 @@ func (m *Manager) cleanStale(branch, service string) {
 			return err
 		}
 		ss := state.GetServiceState(st, branch, service)
-		if ss != nil && ss.Status == state.StatusRunning && ss.PID > 0 && !IsProcessRunning(ss.PID) {
+		if ss.IsRunning() && !IsProcessRunning(ss.PID) {
 			state.SetServiceState(st, branch, service, state.StoppedServiceState(ss.Port))
 			return m.store.Save(st)
 		}

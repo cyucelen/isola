@@ -67,7 +67,7 @@ var baseCfg = pgConfig{
 	Name:      "myapp_${ISOLA_BRANCH_SLUG}",
 }
 
-var wt = accessory.WorktreeInfo{Branch: "feature/auth", Slug: "feature-auth", Path: "/tmp/wt"}
+var wt = accessory.WorktreeInfo{Branch: "feature/auth", Slug: "feature-auth"}
 
 func TestNewValidation(t *testing.T) {
 	tests := []struct {

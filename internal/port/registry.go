@@ -17,7 +17,7 @@ func NewRegistry(store *state.FileStore, cfg *config.Config) *Registry {
 }
 
 // AssignPort allocates a port for the given branch and service.
-// If a port was previously assigned and is still valid, it is reused.
+// If any port was previously assigned, it is reused.
 func (r *Registry) AssignPort(branch, service string) (int, error) {
 	var port int
 	err := r.store.WithLock(func() error {
@@ -53,30 +53,4 @@ func (r *Registry) AssignPort(branch, service string) (int, error) {
 		return r.store.Save(st)
 	})
 	return port, err
-}
-
-// GetPort returns the currently assigned port for a branch+service, or 0.
-func (r *Registry) GetPort(branch, service string) (int, error) {
-	var port int
-	err := r.store.WithLock(func() error {
-		st, err := r.store.Load()
-		if err != nil {
-			return err
-		}
-		port = state.GetPortAssignment(st, branch, service)
-		return nil
-	})
-	return port, err
-}
-
-// Release removes the port assignment for a branch+service.
-func (r *Registry) Release(branch, service string) error {
-	return r.store.WithLock(func() error {
-		st, err := r.store.Load()
-		if err != nil {
-			return err
-		}
-		delete(st.PortAssignments, state.PortKey(branch, service))
-		return r.store.Save(st)
-	})
 }

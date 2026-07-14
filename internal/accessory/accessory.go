@@ -7,6 +7,7 @@ package accessory
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -16,6 +17,15 @@ import (
 	"github.com/cyucelen/isola/internal/expand"
 	"github.com/cyucelen/isola/internal/git"
 )
+
+// URLWithPath returns base with its path replaced by "/"+seg, without mutating
+// the shared parsed URL. Drivers use it to point a server URL at a per-worktree
+// database or logical DB index.
+func URLWithPath(base *url.URL, seg string) string {
+	u := *base
+	u.Path = "/" + seg
+	return u.String()
+}
 
 // OpTimeout bounds a single accessory operation (provision/reset/drop). Callers
 // wrap the context with it so every Kind inherits a uniform deadline instead of
@@ -29,12 +39,11 @@ type WorktreeInfo struct {
 	Project string // repo's project name, namespaces cross-project resources
 	Branch  string // e.g. "feature/auth"
 	Slug    string // URL-safe slug, e.g. "feature-auth"
-	Path    string // absolute worktree path
 }
 
 // FromWorktree builds a WorktreeInfo from a git worktree and its project name.
 func FromWorktree(wt *git.Worktree, project string) WorktreeInfo {
-	return WorktreeInfo{Project: project, Branch: wt.Branch, Slug: wt.Slug(), Path: wt.Path}
+	return WorktreeInfo{Project: project, Branch: wt.Branch, Slug: wt.Slug()}
 }
 
 // Expand interpolates ${VAR} references in s using the worktree's identity
@@ -75,7 +84,8 @@ type Accessory interface {
 	// Kind is the driver discriminator (e.g. "postgres").
 	Kind() string
 	// Provision creates the per-worktree resource, reusing it if already
-	// present, and returns its Handle plus env vars to inject.
+	// present, and returns its Handle plus the connection URL to expose (as
+	// ${accessories.<name>.url}).
 	Provision(ctx context.Context, wt WorktreeInfo) (Provisioned, error)
 	// Drop tears down the resource identified by the persisted Handle. It does
 	// not need a live worktree, so it is safe to call on prune.
@@ -107,8 +117,8 @@ func Register(kind string, f Factory) {
 	registry[kind] = f
 }
 
-// Kinds returns the registered kinds, sorted.
-func Kinds() []string {
+// kinds returns the registered kinds, sorted.
+func kinds() []string {
 	ks := make([]string, 0, len(registry))
 	for k := range registry {
 		ks = append(ks, k)
@@ -131,7 +141,7 @@ func BuildAll(cfg *config.Config) (map[string]Accessory, error) {
 			if strings.Contains(kind, "/") {
 				return nil, fmt.Errorf("accessory %q: third-party driver kind %q is not supported yet", name, kind)
 			}
-			return nil, fmt.Errorf("accessory %q: unknown kind %q (known kinds: %v)", name, kind, Kinds())
+			return nil, fmt.Errorf("accessory %q: unknown kind %q (known kinds: %v)", name, kind, kinds())
 		}
 		prim := prim
 		dec := func(v interface{}) error { return cfg.Meta.PrimitiveDecode(prim, v) }

@@ -9,42 +9,42 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
-	"net"
 	"os"
 	"path/filepath"
 	"time"
 )
 
-// CertPaths holds the file paths for generated certificates and keys.
+// CertPaths holds the file paths for the generated CA certificate and key.
 type CertPaths struct {
-	CACert     string
-	CAKey      string
-	ServerCert string
-	ServerKey  string
+	CACert string
+	CAKey  string
 }
 
-// EnsureCerts ensures that CA and server certificates exist in dir.
-// If all four files (ca.crt, ca.key, server.crt, server.key) exist, it returns
-// their paths without regenerating. Otherwise, it generates all files.
+// CAPath returns the CA certificate path for a cert directory, without
+// requiring the CA to have been generated yet. It is the single source of
+// truth for the "<dir>/ca.crt" layout that callers (trust, up) reference.
+func CAPath(dir string) string {
+	return filepath.Join(dir, "ca.crt")
+}
+
+// EnsureCerts ensures the dev CA certificate and key exist in dir, returning
+// their paths. If ca.crt and ca.key already exist it returns without
+// regenerating. Per-host leaf certificates are minted on demand from this CA
+// by NewSNIGetCertificate, so no server certificate is persisted here.
 func EnsureCerts(dir string) (CertPaths, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return CertPaths{}, fmt.Errorf("creating cert directory: %w", err)
 	}
 
 	paths := CertPaths{
-		CACert:     filepath.Join(dir, "ca.crt"),
-		CAKey:      filepath.Join(dir, "ca.key"),
-		ServerCert: filepath.Join(dir, "server.crt"),
-		ServerKey:  filepath.Join(dir, "server.key"),
+		CACert: CAPath(dir),
+		CAKey:  filepath.Join(dir, "ca.key"),
 	}
 
-	// Check if all files exist.
-	if fileExists(paths.CACert) && fileExists(paths.CAKey) &&
-		fileExists(paths.ServerCert) && fileExists(paths.ServerKey) {
+	if fileExists(paths.CACert) && fileExists(paths.CAKey) {
 		return paths, nil
 	}
 
-	// Generate CA.
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return CertPaths{}, fmt.Errorf("generating CA key: %w", err)
@@ -74,53 +74,11 @@ func EnsureCerts(dir string) (CertPaths, error) {
 		return CertPaths{}, fmt.Errorf("creating CA certificate: %w", err)
 	}
 
-	caCert, err := x509.ParseCertificate(caCertDER)
-	if err != nil {
-		return CertPaths{}, fmt.Errorf("parsing CA certificate: %w", err)
-	}
-
-	// Generate server certificate.
-	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return CertPaths{}, fmt.Errorf("generating server key: %w", err)
-	}
-
-	serverSerial, err := randomSerial()
-	if err != nil {
-		return CertPaths{}, err
-	}
-
-	serverTemplate := &x509.Certificate{
-		SerialNumber: serverSerial,
-		Subject: pkix.Name{
-			CommonName:   "localhost",
-			Organization: []string{"Isola"},
-		},
-		DNSNames:    []string{"*.localhost", "localhost"},
-		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
-		NotBefore:   now,
-		NotAfter:    now.Add(365 * 24 * time.Hour),
-		KeyUsage:    x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-
-	serverCertDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, caCert, &serverKey.PublicKey, caKey)
-	if err != nil {
-		return CertPaths{}, fmt.Errorf("creating server certificate: %w", err)
-	}
-
-	// Write files.
 	if err := writePEM(paths.CACert, "CERTIFICATE", caCertDER, 0644); err != nil {
 		return CertPaths{}, fmt.Errorf("writing CA cert: %w", err)
 	}
 	if err := writeKeyPEM(paths.CAKey, caKey); err != nil {
 		return CertPaths{}, fmt.Errorf("writing CA key: %w", err)
-	}
-	if err := writePEM(paths.ServerCert, "CERTIFICATE", serverCertDER, 0644); err != nil {
-		return CertPaths{}, fmt.Errorf("writing server cert: %w", err)
-	}
-	if err := writeKeyPEM(paths.ServerKey, serverKey); err != nil {
-		return CertPaths{}, fmt.Errorf("writing server key: %w", err)
 	}
 
 	return paths, nil

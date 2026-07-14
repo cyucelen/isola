@@ -78,6 +78,28 @@ func Open() (*Store, error) {
 // Dir returns the global directory path.
 func (s *Store) Dir() string { return s.dir }
 
+// writeJSON marshals v as indented JSON and writes it to path with 0600 perms.
+func writeJSON(path string, v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0600)
+}
+
+// readJSON reads path and unmarshals it into v. A missing file is not an error
+// (v is left untouched), so callers seed any defaults before calling.
+func readJSON(path string, v any) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return json.Unmarshal(b, v)
+}
+
 func (s *Store) load() (*data, error) {
 	b, err := os.ReadFile(s.filePath)
 	if err != nil {
@@ -96,11 +118,10 @@ func (s *Store) load() (*data, error) {
 
 func (s *Store) save(d *data) error {
 	d.Version = formatVersion
-	b, err := json.MarshalIndent(d, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling registry: %w", err)
+	if err := writeJSON(s.filePath, d); err != nil {
+		return fmt.Errorf("writing registry: %w", err)
 	}
-	return os.WriteFile(s.filePath, b, 0600)
+	return nil
 }
 
 // prune drops entries whose state dir no longer exists on disk.
@@ -192,14 +213,7 @@ func (s *Store) daemonPath() string { return filepath.Join(s.dir, "proxy.json") 
 func (s *Store) GetDaemon() (Daemon, error) {
 	var d Daemon
 	err := s.withLock(func() error {
-		b, err := os.ReadFile(s.daemonPath())
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-		return json.Unmarshal(b, &d)
+		return readJSON(s.daemonPath(), &d)
 	})
 	return d, err
 }
@@ -208,11 +222,7 @@ func (s *Store) GetDaemon() (Daemon, error) {
 func (s *Store) SetDaemon(d Daemon) error {
 	d.Version = formatVersion
 	return s.withLock(func() error {
-		b, err := json.MarshalIndent(d, "", "  ")
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(s.daemonPath(), b, 0600)
+		return writeJSON(s.daemonPath(), d)
 	})
 }
 
@@ -238,19 +248,13 @@ func (s *Store) HTTPSByPort() (map[int]bool, error) {
 
 // Ports returns the sorted union of proxy ports across all registered projects.
 func (s *Store) Ports() ([]int, error) {
-	projects, err := s.List()
+	byPort, err := s.HTTPSByPort()
 	if err != nil {
 		return nil, err
 	}
-	seen := map[int]bool{}
-	var ports []int
-	for _, p := range projects {
-		for _, port := range p.ProxyPorts {
-			if !seen[port] {
-				seen[port] = true
-				ports = append(ports, port)
-			}
-		}
+	ports := make([]int, 0, len(byPort))
+	for port := range byPort {
+		ports = append(ports, port)
 	}
 	sort.Ints(ports)
 	return ports, nil

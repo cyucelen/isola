@@ -9,25 +9,6 @@ import (
 
 // --- Pure function tests ---
 
-func TestDefaultConfig(t *testing.T) {
-	cfg := DefaultConfig()
-
-	if _, ok := cfg.Services["frontend"]; !ok {
-		t.Fatal("DefaultConfig missing 'frontend' service")
-	}
-
-	fe := cfg.Services["frontend"]
-	if fe.PortRange.Min != 3100 || fe.PortRange.Max != 3199 {
-		t.Errorf("frontend port range = [%d, %d], want [3100, 3199]", fe.PortRange.Min, fe.PortRange.Max)
-	}
-	if fe.ProxyPort != 3000 {
-		t.Errorf("frontend proxy_port = %d, want 3000", fe.ProxyPort)
-	}
-	if fe.Command != "npm run dev" {
-		t.Errorf("frontend command = %q, want %q", fe.Command, "npm run dev")
-	}
-}
-
 func TestValidate(t *testing.T) {
 	validCfg := func() *Config {
 		return &Config{

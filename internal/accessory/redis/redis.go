@@ -163,25 +163,25 @@ func (d *driver) Drop(ctx context.Context, handle map[string]string) error {
 	return nil
 }
 
-// allocate finds the logical DB owned by slug, claiming a free one if needed.
-// It hashes the slug to a starting index and linear-probes for a free or
-// already-owned DB, mirroring the port allocator.
-func (d *driver) allocate(ctx context.Context, s store, slug string) (int, error) {
-	base := int(hashSlug(slug) % uint32(d.numDB))
+// allocate finds the logical DB owned by owner (a "project:slug" id), claiming a
+// free one if needed. It hashes the owner id to a starting index and
+// linear-probes for a free or already-owned DB, mirroring the port allocator.
+func (d *driver) allocate(ctx context.Context, s store, owner string) (int, error) {
+	base := int(hashSlug(owner) % uint32(d.numDB))
 	for i := 0; i < d.numDB; i++ {
 		db := (base + i) % d.numDB
-		claimed, err := s.setOwnerNX(ctx, db, slug)
+		claimed, err := s.setOwnerNX(ctx, db, owner)
 		if err != nil {
 			return 0, err
 		}
 		if claimed {
 			return db, nil
 		}
-		owner, err := s.owner(ctx, db)
+		cur, err := s.owner(ctx, db)
 		if err != nil {
 			return 0, err
 		}
-		if owner == slug {
+		if cur == owner {
 			return db, nil // already ours; reuse
 		}
 	}
@@ -198,9 +198,7 @@ func (d *driver) provisioned(wt accessory.WorktreeInfo, db int) accessory.Provis
 
 // connURL returns server_url with its logical database set to db.
 func (d *driver) connURL(db int) string {
-	u := *d.serverURL // copy; do not mutate the shared parsed URL
-	u.Path = "/" + strconv.Itoa(db)
-	return u.String()
+	return accessory.URLWithPath(d.serverURL, strconv.Itoa(db))
 }
 
 func hashSlug(slug string) uint32 {

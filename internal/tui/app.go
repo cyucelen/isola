@@ -269,53 +269,36 @@ func (m *Model) refreshStatus() tea.Msg {
 	return StatusUpdateMsg{Rows: rows}
 }
 
-func (m *Model) startSelected() tea.Msg {
+// actOnSelected runs act on the selected row's service and reports the outcome
+// under verb (e.g. "Started"). The three single-service verbs differ only by
+// verb and which manager call they run.
+func (m *Model) actOnSelected(verb string, act func(*git.Worktree, string) []process.ServiceResult) tea.Msg {
 	row := m.selectedRow()
 	if row == nil {
 		return ActionResultMsg{Message: "No service selected"}
 	}
-
 	tree := &git.Worktree{Path: m.worktreePath(row.Branch), Branch: row.Branch}
-	results := m.manager.StartServices(tree, row.Service)
-	for _, r := range results {
+	for _, r := range act(tree, row.Service) {
 		if r.Err != nil {
 			return ActionResultMsg{Message: fmt.Sprintf("Error: %v", r.Err), IsError: true}
 		}
 	}
-	return ActionResultMsg{Message: fmt.Sprintf("Started %s for %s", row.Service, row.Branch)}
+	return ActionResultMsg{Message: fmt.Sprintf("%s %s for %s", verb, row.Service, row.Branch)}
+}
+
+func (m *Model) startSelected() tea.Msg {
+	return m.actOnSelected("Started", m.manager.StartServices)
 }
 
 func (m *Model) stopSelected() tea.Msg {
-	row := m.selectedRow()
-	if row == nil {
-		return ActionResultMsg{Message: "No service selected"}
-	}
-
-	tree := &git.Worktree{Path: m.worktreePath(row.Branch), Branch: row.Branch}
-	results := m.manager.StopServices(tree, row.Service)
-	for _, r := range results {
-		if r.Err != nil {
-			return ActionResultMsg{Message: fmt.Sprintf("Error: %v", r.Err), IsError: true}
-		}
-	}
-	return ActionResultMsg{Message: fmt.Sprintf("Stopped %s for %s", row.Service, row.Branch)}
+	return m.actOnSelected("Stopped", m.manager.StopServices)
 }
 
 func (m *Model) restartSelected() tea.Msg {
-	row := m.selectedRow()
-	if row == nil {
-		return ActionResultMsg{Message: "No service selected"}
-	}
-
-	tree := &git.Worktree{Path: m.worktreePath(row.Branch), Branch: row.Branch}
-	m.manager.StopServices(tree, row.Service)
-	results := m.manager.StartServices(tree, row.Service)
-	for _, r := range results {
-		if r.Err != nil {
-			return ActionResultMsg{Message: fmt.Sprintf("Error: %v", r.Err), IsError: true}
-		}
-	}
-	return ActionResultMsg{Message: fmt.Sprintf("Restarted %s for %s", row.Service, row.Branch)}
+	return m.actOnSelected("Restarted", func(tree *git.Worktree, svc string) []process.ServiceResult {
+		m.manager.StopServices(tree, svc)
+		return m.manager.StartServices(tree, svc)
+	})
 }
 
 func (m *Model) toggleProxy() tea.Msg {
@@ -367,48 +350,37 @@ func (m *Model) openSelected() tea.Msg {
 	}
 
 	// The scheme follows this project's proxy config.
-	scheme := "http"
-	if m.cfg.Proxy.HTTPS {
-		scheme = "https"
-	}
-
-	url := browser.BuildURL(scheme, row.Slug, m.cfg.Project, svc.ProxyPort)
+	url := browser.BuildURL(config.Scheme(m.cfg.Proxy.HTTPS), row.Slug, m.cfg.Project, svc.ProxyPort)
 	if err := browser.Open(url); err != nil {
 		return ActionResultMsg{Message: fmt.Sprintf("Error opening browser: %v", err), IsError: true}
 	}
 	return ActionResultMsg{Message: fmt.Sprintf("Opening %s", url)}
 }
 
-func (m *Model) startAll() tea.Msg {
+// actOnAll runs act on every non-bare worktree and reports how many services
+// the call handled without error, under verb (e.g. "Started").
+func (m *Model) actOnAll(verb string, act func(*git.Worktree, string) []process.ServiceResult) tea.Msg {
 	count := 0
 	for _, tree := range m.trees {
 		if tree.IsBare {
 			continue
 		}
-		results := m.manager.StartServices(&tree, "")
-		for _, r := range results {
+		tree := tree
+		for _, r := range act(&tree, "") {
 			if r.Err == nil {
 				count++
 			}
 		}
 	}
-	return ActionResultMsg{Message: fmt.Sprintf("Started %d services", count)}
+	return ActionResultMsg{Message: fmt.Sprintf("%s %d services", verb, count)}
+}
+
+func (m *Model) startAll() tea.Msg {
+	return m.actOnAll("Started", m.manager.StartServices)
 }
 
 func (m *Model) stopAll() tea.Msg {
-	count := 0
-	for _, tree := range m.trees {
-		if tree.IsBare {
-			continue
-		}
-		results := m.manager.StopServices(&tree, "")
-		for _, r := range results {
-			if r.Err == nil {
-				count++
-			}
-		}
-	}
-	return ActionResultMsg{Message: fmt.Sprintf("Stopped %d services", count)}
+	return m.actOnAll("Stopped", m.manager.StopServices)
 }
 
 func (m *Model) viewLogs() tea.Msg {

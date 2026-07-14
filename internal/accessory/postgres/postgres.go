@@ -197,9 +197,7 @@ func (d *driver) connURL(wt accessory.WorktreeInfo, dbName string) string {
 	if d.cfg.URL != "" {
 		return wt.Expand(d.cfg.URL, map[string]string{"db": dbName})
 	}
-	u := *d.serverURL // copy; do not mutate the shared parsed URL
-	u.Path = "/" + dbName
-	return u.String()
+	return accessory.URLWithPath(d.serverURL, dbName)
 }
 
 func (d *driver) databaseExists(ctx context.Context, c conn, dbName string) (bool, error) {

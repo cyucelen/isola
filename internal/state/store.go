@@ -28,6 +28,13 @@ type ServiceState struct {
 	StartedAt string `json:"started_at"`
 }
 
+// IsRunning reports whether the record claims a running service with a real PID.
+// It is the state-only half of the "is this service alive" check; callers add a
+// liveness probe (process.IsProcessRunning) since state cannot import process.
+func (ss *ServiceState) IsRunning() bool {
+	return ss != nil && ss.Status == StatusRunning && ss.PID > 0
+}
+
 // AccessoryState records a per-worktree resource isola provisioned (e.g. a
 // database), so teardown knows exactly what it created and may drop. Handle is
 // the driver's opaque record (e.g. {"database": "myapp_x"}) passed back to Drop.
@@ -99,6 +106,18 @@ func (s *FileStore) Load() (*State, error) {
 		st.Accessories = map[string]map[string]*AccessoryState{}
 	}
 	return &st, nil
+}
+
+// LoadLocked loads the state under the store lock, for read-only callers that
+// only need a consistent snapshot (not a load-mutate-save transaction).
+func (s *FileStore) LoadLocked() (*State, error) {
+	var st *State
+	err := s.WithLock(func() error {
+		var e error
+		st, e = s.Load()
+		return e
+	})
+	return st, err
 }
 
 // Save writes the state to disk atomically: a partial or truncated file (from a
@@ -202,13 +221,24 @@ func StoppedServiceState(port int) *ServiceState {
 	}
 }
 
-// OrphanedBranches returns branches present in state but not in the given set of active branches.
+// OrphanedBranches returns branches present in state (with services or
+// accessories recorded) but absent from the set of active branches. Scanning
+// both maps means a branch whose services are gone but that still owns a
+// database is not silently missed.
 func OrphanedBranches(st *State, activeBranches map[string]bool) []string {
+	seen := map[string]bool{}
 	var orphaned []string
-	for branch := range st.Services {
-		if !activeBranches[branch] {
+	add := func(branch string) {
+		if !activeBranches[branch] && !seen[branch] {
+			seen[branch] = true
 			orphaned = append(orphaned, branch)
 		}
+	}
+	for branch := range st.Services {
+		add(branch)
+	}
+	for branch := range st.Accessories {
+		add(branch)
 	}
 	return orphaned
 }

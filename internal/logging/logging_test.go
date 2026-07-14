@@ -84,23 +84,3 @@ func TestLevels(t *testing.T) {
 		}
 	})
 }
-
-func TestHelpers(t *testing.T) {
-	SetLevel(LevelVerbose)
-	if !IsVerbose() {
-		t.Error("expected IsVerbose() = true")
-	}
-	if IsDebug() {
-		t.Error("expected IsDebug() = false at verbose level")
-	}
-	if IsQuiet() {
-		t.Error("expected IsQuiet() = false at verbose level")
-	}
-
-	SetLevel(LevelQuiet)
-	if !IsQuiet() {
-		t.Error("expected IsQuiet() = true")
-	}
-
-	SetLevel(LevelNormal)
-}

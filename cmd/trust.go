@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/cyucelen/isola/internal/cert"
 	"github.com/cyucelen/isola/internal/registry"
 	"github.com/cyucelen/isola/internal/trust"
 	"github.com/spf13/cobra"
@@ -30,7 +31,7 @@ run this command to (re)install trust manually. Run 'isola up' (with HTTPS) or
 		if err != nil {
 			return err
 		}
-		caPath := filepath.Join(gdir, "certs", "ca.crt")
+		caPath := cert.CAPath(filepath.Join(gdir, "certs"))
 		if _, err := os.Stat(caPath); os.IsNotExist(err) {
 			return fmt.Errorf("CA certificate not found at %s\nRun 'isola up' (with HTTPS) or 'isola proxy start --https' first to generate certificates", caPath)
 		}

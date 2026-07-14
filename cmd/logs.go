@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -65,13 +64,12 @@ Use --follow/-f to keep streaming new output until Ctrl-C.`,
 
 		// Logs live under the shared state dir (main worktree), not the current
 		// worktree, so a single 'isola logs <branch>' can reach every worktree.
-		stateDir := filepath.Join(stateRoot, ".isola")
-		store, err := state.NewFileStore(stateDir)
+		store, err := openStateStore()
 		if err != nil {
-			return fmt.Errorf("creating state store: %w", err)
+			return err
 		}
 
-		targets := logsTargets(tree, store, stateDir)
+		targets := logsTargets(tree, store)
 		if len(targets) == 0 {
 			logging.Info("no logs yet for %s", tree.Branch)
 			return nil
@@ -122,7 +120,7 @@ func resolveLogsWorktree(cwd string, args []string) (*git.Worktree, error) {
 
 // logsTargets resolves which service log files to stream. Files that do not
 // exist yet are included only in follow mode (tail -F waits for them).
-func logsTargets(tree *git.Worktree, store *state.FileStore, stateDir string) []logTarget {
+func logsTargets(tree *git.Worktree, store *state.FileStore) []logTarget {
 	var services []string
 	if logsService != "" {
 		services = []string{logsService}
@@ -133,19 +131,15 @@ func logsTargets(tree *git.Worktree, store *state.FileStore, stateDir string) []
 		sort.Strings(services)
 	}
 
-	var st *state.State
-	if err := store.WithLock(func() error {
-		var e error
-		st, e = store.Load()
-		return e
-	}); err != nil {
+	st, err := store.LoadLocked()
+	if err != nil {
 		logging.Warn("failed to load state: %v", err)
 	}
 
 	slug := tree.Slug()
 	var targets []logTarget
 	for _, svc := range services {
-		path := process.LogPath(stateDir, slug, svc)
+		path := process.LogPath(store.Dir(), slug, svc)
 		_, statErr := os.Stat(path)
 		if statErr != nil && !logsFollow {
 			continue // no log yet and not following: nothing to show

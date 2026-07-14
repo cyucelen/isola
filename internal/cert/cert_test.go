@@ -4,7 +4,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
-	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,87 +44,6 @@ func TestEnsureCerts_GeneratesValidCA(t *testing.T) {
 	}
 }
 
-func TestEnsureCerts_GeneratesValidServerCert(t *testing.T) {
-	dir := t.TempDir()
-	paths, err := EnsureCerts(dir)
-	if err != nil {
-		t.Fatalf("EnsureCerts() error: %v", err)
-	}
-
-	// Parse server cert.
-	serverPEM, err := os.ReadFile(paths.ServerCert)
-	if err != nil {
-		t.Fatalf("reading server cert: %v", err)
-	}
-	block, _ := pem.Decode(serverPEM)
-	if block == nil {
-		t.Fatal("failed to decode server cert PEM")
-	}
-	server, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		t.Fatalf("parsing server cert: %v", err)
-	}
-
-	// Check SANs.
-	wantDNS := []string{"*.localhost", "localhost"}
-	if len(server.DNSNames) != len(wantDNS) {
-		t.Fatalf("DNSNames = %v, want %v", server.DNSNames, wantDNS)
-	}
-	for i, name := range wantDNS {
-		if server.DNSNames[i] != name {
-			t.Errorf("DNSNames[%d] = %q, want %q", i, server.DNSNames[i], name)
-		}
-	}
-
-	// Check IP SANs.
-	foundV4, foundV6 := false, false
-	for _, ip := range server.IPAddresses {
-		if ip.Equal(net.IPv4(127, 0, 0, 1)) {
-			foundV4 = true
-		}
-		if ip.Equal(net.IPv6loopback) {
-			foundV6 = true
-		}
-	}
-	if !foundV4 {
-		t.Error("server cert missing 127.0.0.1 IP SAN")
-	}
-	if !foundV6 {
-		t.Error("server cert missing ::1 IP SAN")
-	}
-
-	// Check ExtKeyUsage.
-	foundServerAuth := false
-	for _, usage := range server.ExtKeyUsage {
-		if usage == x509.ExtKeyUsageServerAuth {
-			foundServerAuth = true
-		}
-	}
-	if !foundServerAuth {
-		t.Error("server cert missing ExtKeyUsageServerAuth")
-	}
-
-	// Verify chain: server cert signed by CA.
-	caPEM, err := os.ReadFile(paths.CACert)
-	if err != nil {
-		t.Fatalf("reading CA cert: %v", err)
-	}
-	caBlock, _ := pem.Decode(caPEM)
-	ca, err := x509.ParseCertificate(caBlock.Bytes)
-	if err != nil {
-		t.Fatalf("parsing CA cert: %v", err)
-	}
-
-	pool := x509.NewCertPool()
-	pool.AddCert(ca)
-	if _, err := server.Verify(x509.VerifyOptions{
-		Roots:     pool,
-		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}); err != nil {
-		t.Errorf("server cert chain verification failed: %v", err)
-	}
-}
-
 func TestEnsureCerts_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 
@@ -163,8 +81,8 @@ func TestEnsureCerts_RegeneratesOnMissing(t *testing.T) {
 	}
 
 	// Remove one file.
-	if err := os.Remove(paths.ServerKey); err != nil {
-		t.Fatalf("removing server key: %v", err)
+	if err := os.Remove(paths.CAKey); err != nil {
+		t.Fatalf("removing CA key: %v", err)
 	}
 
 	// Second call should regenerate all files.
@@ -174,8 +92,8 @@ func TestEnsureCerts_RegeneratesOnMissing(t *testing.T) {
 	}
 
 	// Verify file exists again.
-	if !fileExists(filepath.Join(dir, "server.key")) {
-		t.Error("server.key should be regenerated")
+	if !fileExists(filepath.Join(dir, "ca.key")) {
+		t.Error("ca.key should be regenerated")
 	}
 }
 
@@ -186,7 +104,7 @@ func TestEnsureCerts_KeyFilePermissions(t *testing.T) {
 		t.Fatalf("EnsureCerts() error: %v", err)
 	}
 
-	for _, keyPath := range []string{paths.CAKey, paths.ServerKey} {
+	for _, keyPath := range []string{paths.CAKey} {
 		info, err := os.Stat(keyPath)
 		if err != nil {
 			t.Fatalf("stat %s: %v", keyPath, err)

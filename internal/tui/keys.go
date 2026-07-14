@@ -66,22 +66,3 @@ func DefaultKeyMap() KeyMap {
 		),
 	}
 }
-
-// ShortHelp returns a compact help string.
-func (k KeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{
-		k.Start, k.Stop, k.Restart, k.Open,
-		k.StartAll, k.StopAll, k.ToggleProxy,
-		k.ViewLogs, k.Quit,
-	}
-}
-
-// FullHelp returns the full set of key bindings for the help view.
-func (k KeyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{
-		{k.Up, k.Down},
-		{k.Start, k.Stop, k.Restart, k.Open},
-		{k.StartAll, k.StopAll, k.ToggleProxy},
-		{k.ViewLogs, k.Quit},
-	}
-}

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/cyucelen/isola/internal/config"
 	"github.com/cyucelen/isola/internal/git"
@@ -100,7 +101,7 @@ func checkGit() checkResult {
 	return checkResult{
 		name:   "git installed",
 		ok:     true,
-		detail: fmt.Sprintf("%s (%s)", trimNewline(string(out)), path),
+		detail: fmt.Sprintf("%s (%s)", strings.TrimSuffix(string(out), "\n"), path),
 	}
 }
 
@@ -178,22 +179,18 @@ func checkStaleState(root string) checkResult {
 	stateDir := filepath.Join(root, ".isola")
 	store, err := state.NewFileStore(stateDir)
 	if err != nil {
-		return checkResult{name: "state file healthy", ok: true, detail: "no state directory"}
+		return checkResult{name: "state file healthy", ok: false, detail: err.Error()}
 	}
 
-	var st *state.State
-	if err := store.WithLock(func() error {
-		var e error
-		st, e = store.Load()
-		return e
-	}); err != nil {
+	st, err := store.LoadLocked()
+	if err != nil {
 		return checkResult{name: "state file healthy", ok: false, detail: err.Error()}
 	}
 
 	var staleDetails []string
 	for branch, services := range st.Services {
 		for svcName, ss := range services {
-			if ss.Status == state.StatusRunning && ss.PID > 0 && !process.IsProcessRunning(ss.PID) {
+			if ss.IsRunning() && !process.IsProcessRunning(ss.PID) {
 				staleDetails = append(staleDetails, fmt.Sprintf("%s/%s (PID %d)", branch, svcName, ss.PID))
 			}
 		}
@@ -214,15 +211,11 @@ func checkStaleWorktrees(root, cwd string) checkResult {
 	stateDir := filepath.Join(root, ".isola")
 	store, err := state.NewFileStore(stateDir)
 	if err != nil {
-		return checkResult{name: "worktree state consistent", ok: true}
+		return checkResult{name: "worktree state consistent", ok: false, detail: err.Error()}
 	}
 
-	var st *state.State
-	if err := store.WithLock(func() error {
-		var e error
-		st, e = store.Load()
-		return e
-	}); err != nil {
+	st, err := store.LoadLocked()
+	if err != nil {
 		return checkResult{name: "worktree state consistent", ok: false, detail: err.Error()}
 	}
 
@@ -231,16 +224,8 @@ func checkStaleWorktrees(root, cwd string) checkResult {
 		return checkResult{name: "worktree state consistent", ok: false, detail: err.Error()}
 	}
 
-	// Build set of branches that have worktrees on disk.
-	activeBranches := make(map[string]bool, len(trees))
-	for _, t := range trees {
-		if !t.IsBare {
-			activeBranches[t.Branch] = true
-		}
-	}
-
 	// Find branches in state that have no worktree on disk.
-	orphaned := state.OrphanedBranches(st, activeBranches)
+	orphaned := state.OrphanedBranches(st, git.ActiveBranches(trees))
 	sort.Strings(orphaned)
 
 	if len(orphaned) > 0 {
@@ -252,13 +237,6 @@ func checkStaleWorktrees(root, cwd string) checkResult {
 	}
 
 	return checkResult{name: "worktree state consistent", ok: true}
-}
-
-func trimNewline(s string) string {
-	if len(s) > 0 && s[len(s)-1] == '\n' {
-		return s[:len(s)-1]
-	}
-	return s
 }
 
 func init() {

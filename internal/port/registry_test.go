@@ -72,35 +72,7 @@ func TestRegistryAssignPort(t *testing.T) {
 	})
 }
 
-func TestRegistryGetPort(t *testing.T) {
-	reg := newTestRegistry(t)
-
-	t.Run("before assignment", func(t *testing.T) {
-		port, err := reg.GetPort("main", "web")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if port != 0 {
-			t.Errorf("GetPort before assign = %d, want 0", port)
-		}
-	})
-
-	t.Run("after assignment", func(t *testing.T) {
-		assigned, err := reg.AssignPort("main", "web")
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := reg.GetPort("main", "web")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != assigned {
-			t.Errorf("GetPort = %d, want %d", got, assigned)
-		}
-	})
-}
-
-func TestRegistryRelease(t *testing.T) {
+func TestRegistryReassignReturnsSamePort(t *testing.T) {
 	reg := newTestRegistry(t)
 
 	assigned, err := reg.AssignPort("main", "web")
@@ -111,26 +83,12 @@ func TestRegistryRelease(t *testing.T) {
 		t.Fatal("AssignPort returned 0")
 	}
 
-	t.Run("release clears", func(t *testing.T) {
-		if err := reg.Release("main", "web"); err != nil {
-			t.Fatalf("Release() error: %v", err)
-		}
-		port, err := reg.GetPort("main", "web")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if port != 0 {
-			t.Errorf("GetPort after Release = %d, want 0", port)
-		}
-	})
-
-	t.Run("re-assign works", func(t *testing.T) {
-		port, err := reg.AssignPort("main", "web")
-		if err != nil {
-			t.Fatalf("AssignPort after Release error: %v", err)
-		}
-		if port < 3100 || port > 3199 {
-			t.Errorf("re-assigned port = %d, not in range", port)
-		}
-	})
+	// A second AssignPort for the same branch+service reuses the assignment.
+	again, err := reg.AssignPort("main", "web")
+	if err != nil {
+		t.Fatalf("second AssignPort error: %v", err)
+	}
+	if again != assigned {
+		t.Errorf("re-assign = %d, want %d (should reuse)", again, assigned)
+	}
 }

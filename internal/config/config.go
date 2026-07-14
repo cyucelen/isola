@@ -51,9 +51,27 @@ type EnvFileConfig struct {
 	Path string `toml:"path"`
 }
 
-// EnvFileEnabled reports whether env-file writing is on (default: on).
-func (c *Config) EnvFileEnabled() bool {
-	return c.EnvFile.Enabled == nil || *c.EnvFile.Enabled
+// boolOr returns *p, or def when p is nil. It centralizes the "unset means
+// default" convention used by the optional *bool config toggles below.
+func boolOr(p *bool, def bool) bool {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+// Scheme returns "https" when https is true, else "http". Shared by everything
+// that builds a proxy URL from the proxy's HTTPS setting.
+func Scheme(https bool) string {
+	if https {
+		return "https"
+	}
+	return "http"
+}
+
+// envFileEnabled reports whether env-file writing is on (default: on).
+func (c *Config) envFileEnabled() bool {
+	return boolOr(c.EnvFile.Enabled, true)
 }
 
 // ServiceEnvFile returns the env-file name for a service (relative to its dir),
@@ -61,7 +79,7 @@ func (c *Config) EnvFileEnabled() bool {
 // per-service `env_file` unset -> the global path (default ".env"); set to ""
 // -> disabled for this service; set to a name -> that name.
 func (c *Config) ServiceEnvFile(service string) string {
-	if !c.EnvFileEnabled() {
+	if !c.envFileEnabled() {
 		return ""
 	}
 	def := c.EnvFile.Path
@@ -99,13 +117,13 @@ type ProxyConfig struct {
 
 // AutoProxyEnabled reports whether `isola up` should auto-start the proxy.
 func (c *Config) AutoProxyEnabled() bool {
-	return c.Proxy.Enabled == nil || *c.Proxy.Enabled
+	return boolOr(c.Proxy.Enabled, true)
 }
 
 // AutoTrustEnabled reports whether `isola up` may auto-install the HTTPS CA into
 // the system trust store on an interactive first run.
 func (c *Config) AutoTrustEnabled() bool {
-	return c.Proxy.AutoTrust == nil || *c.Proxy.AutoTrust
+	return boolOr(c.Proxy.AutoTrust, true)
 }
 
 // ProjectName returns the configured project, or a slugified basename of
@@ -211,24 +229,6 @@ type WTServiceOverride struct {
 	Command string            `toml:"command,omitempty"`
 	Port    int               `toml:"port,omitempty"`
 	Env     map[string]string `toml:"env,omitempty"`
-}
-
-// DefaultConfig returns a default configuration with a single frontend service.
-func DefaultConfig() *Config {
-	return &Config{
-		Services: map[string]ServiceConfig{
-			"frontend": {
-				Command: "npm run dev",
-				Dir:     "",
-				PortRange: PortRange{
-					Min: 3100,
-					Max: 3199,
-				},
-				ProxyPort: 3000,
-			},
-		},
-		Worktrees: map[string]WTOverride{},
-	}
 }
 
 // Load reads and parses the config file from the given repo root.

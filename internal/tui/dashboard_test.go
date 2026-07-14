@@ -222,24 +222,3 @@ func TestDefaultKeyMap(t *testing.T) {
 		}
 	}
 }
-
-func TestKeyMapShortHelp(t *testing.T) {
-	km := DefaultKeyMap()
-	bindings := km.ShortHelp()
-	if len(bindings) == 0 {
-		t.Error("ShortHelp() should return non-empty slice")
-	}
-}
-
-func TestKeyMapFullHelp(t *testing.T) {
-	km := DefaultKeyMap()
-	groups := km.FullHelp()
-	if len(groups) == 0 {
-		t.Error("FullHelp() should return non-empty slice")
-	}
-	for i, group := range groups {
-		if len(group) == 0 {
-			t.Errorf("FullHelp() group %d is empty", i)
-		}
-	}
-}

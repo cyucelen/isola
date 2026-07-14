@@ -18,6 +18,10 @@ const (
 	colSeparators   = 4 * 2 // 4 separators × 2 chars ("  ")
 	colCursorPrefix = 2     // "▸ " or "  "
 	colMinWorktree  = 18
+	// borderOverhead accounts for the panel's RoundedBorder (1 char each side)
+	// plus Padding(1,2) (2 chars each side) = ~6. Update if borderStyle in
+	// styles.go changes.
+	borderOverhead = 6
 )
 
 // fixedColumnsWidth is the sum of all non-WORKTREE columns plus separators and cursor.
@@ -25,9 +29,6 @@ const fixedColumnsWidth = colServiceWidth + colPortWidth + colStatusWidth + colP
 
 // worktreeColumnWidth computes the dynamic WORKTREE column width.
 func worktreeColumnWidth(termWidth int) int {
-	// borderOverhead accounts for borderStyle: RoundedBorder (1 char each side) + Padding(1,2) (2 chars each side) = ~6.
-	// Update this if borderStyle in styles.go changes.
-	const borderOverhead = 6
 	available := termWidth - fixedColumnsWidth - borderOverhead
 	if available < colMinWorktree {
 		return colMinWorktree
@@ -35,21 +36,28 @@ func worktreeColumnWidth(termWidth int) int {
 	return available
 }
 
+// renderRow renders one table row: each value laid into its column width with
+// base, joined by the two-space separator. Header and data rows share it,
+// differing only in base style and values.
+func renderRow(widths []int, values []string, base lipgloss.Style) string {
+	cells := make([]string, len(values))
+	for i, v := range values {
+		cells[i] = base.Width(widths[i]).Render(v)
+	}
+	return strings.Join(cells, "  ")
+}
+
 // renderTable renders the dashboard table with the given rows and cursor position.
 func renderTable(rows []ServiceRow, cursor int, termWidth int) string {
 	wtWidth := worktreeColumnWidth(termWidth)
+	widths := []int{wtWidth, colServiceWidth, colPortWidth, colStatusWidth, colPIDWidth}
 
 	var b strings.Builder
 
-	// Header
-	headerCells := []string{
-		lipgloss.NewStyle().Width(wtWidth).Bold(true).Foreground(colorWhite).Render("WORKTREE"),
-		lipgloss.NewStyle().Width(colServiceWidth).Bold(true).Foreground(colorWhite).Render("SERVICE"),
-		lipgloss.NewStyle().Width(colPortWidth).Bold(true).Foreground(colorWhite).Render("PORT"),
-		lipgloss.NewStyle().Width(colStatusWidth).Bold(true).Foreground(colorWhite).Render("STATUS"),
-		lipgloss.NewStyle().Width(colPIDWidth).Bold(true).Foreground(colorWhite).Render("PID"),
-	}
-	header := "  " + strings.Join(headerCells, "  ") // leading spaces align with cursor prefix on data rows
+	// Header. Leading spaces align with the cursor prefix on data rows.
+	header := "  " + renderRow(widths,
+		[]string{"WORKTREE", "SERVICE", "PORT", "STATUS", "PID"},
+		lipgloss.NewStyle().Bold(true).Foreground(colorWhite))
 	b.WriteString(headerStyle.Render(header))
 	b.WriteString("\n")
 
@@ -70,15 +78,9 @@ func renderTable(rows []ServiceRow, cursor int, termWidth int) string {
 			pidStr = fmt.Sprintf("%d", row.PID)
 		}
 
-		cells := []string{
-			lipgloss.NewStyle().Width(wtWidth).Render(row.Branch),
-			lipgloss.NewStyle().Width(colServiceWidth).Render(row.Service),
-			lipgloss.NewStyle().Width(colPortWidth).Render(portStr),
-			lipgloss.NewStyle().Width(colStatusWidth).Render(statusStr),
-			lipgloss.NewStyle().Width(colPIDWidth).Render(pidStr),
-		}
-
-		line := strings.Join(cells, "  ")
+		line := renderRow(widths,
+			[]string{row.Branch, row.Service, portStr, statusStr, pidStr},
+			lipgloss.NewStyle())
 
 		if i == cursor {
 			// Prepend cursor indicator
@@ -114,8 +116,7 @@ func renderHelp(keys KeyMap, width int) string {
 		"[a] all start", "[X] all stop", "[p] proxy", "[q] quit",
 	}
 
-	// Account for border padding (~6 chars)
-	maxWidth := width - 6
+	maxWidth := width - borderOverhead
 	if maxWidth < 40 {
 		maxWidth = 40
 	}
