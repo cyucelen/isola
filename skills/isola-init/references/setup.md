@@ -12,9 +12,11 @@ Check whether it's already installed:
 command -v isola && isola version
 ```
 
-If that prints nothing, install it by following
-[install.md](install.md) (Homebrew on macOS, `go install`, or from source), then
-re-run the check. Don't proceed until `isola version` works.
+If that prints nothing, install it by following [install.md](install.md)
+(Homebrew on macOS, `.deb`/`.rpm`/AUR on Linux, or `go install`), then re-run the
+check. Don't proceed until `isola version` works. If the skill isn't active and
+you reached this guide by URL, install.md is alongside it at
+https://github.com/cyucelen/isola/blob/main/skills/isola-init/references/install.md
 
 ## 2. Discover the dev processes
 
@@ -55,7 +57,7 @@ API_DIRECT_URL = "${services.api.direct_url}"   # sibling's loopback URL (server
 
 Reference namespace: `accessories.<name>.url`, `services.<name>.url`,
 `services.<name>.direct_url`, `services.<name>.port`, and `proxy.ca_cert` (the
-dev CA path, HTTPS only; see step 7). `services.<name>.url` routes through the
+dev CA path, HTTPS only; see step 8). `services.<name>.url` routes through the
 proxy (use for browser links); `services.<name>.direct_url` is a direct
 `http://127.0.0.1:<port>` (use for server-side calls between services: no DNS,
 works on every OS). isola delivers each service's env into its **process**
@@ -118,7 +120,23 @@ The setup is verified when **all** of these hold:
    left literal); if it reads the environment directly, the working service is
    itself the confirmation.
 
-## 7. HTTPS (optional)
+## 7. Automate new worktrees (git hook)
+
+Install a `post-checkout` hook so every new worktree starts itself (`isola up` on
+creation). Do it for this clone:
+
+```bash
+isola hooks install
+```
+
+The hook runs `isola up` only on a brand-new worktree and no-ops when there is no
+`.isola.toml`, so it is safe to leave on. To share it with the team instead, run
+`isola hooks install --shared` (it commits a `.githooks/` dir and sets
+`core.hooksPath`; each clone runs that once). Running `--shared` after a local
+install is harmless: git uses the shared hook and the local one goes dormant.
+Remove anytime with `isola hooks uninstall`.
+
+## 8. HTTPS (optional)
 
 By default the proxy serves **HTTP**, which needs no certificates and no trust
 setup. Only enable HTTPS if the app requires it (secure cookies, `crypto.subtle`,

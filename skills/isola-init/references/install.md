@@ -21,13 +21,24 @@ coding agents can operate it.
 
 Pick the method that fits your system.
 
-### Homebrew (macOS or Linux)
+### macOS (Homebrew)
 
 ```bash
 brew install cyucelen/tap/isola
 ```
 
-### Go
+### Linux (packages)
+
+`.deb` and `.rpm` packages are attached to each
+[release](https://github.com/cyucelen/isola/releases/latest):
+
+```bash
+sudo dpkg -i isola_*_linux_amd64.deb   # Debian/Ubuntu
+sudo rpm -i  isola_*_linux_amd64.rpm   # Fedora/RHEL
+yay -S isola-bin                        # Arch (AUR)
+```
+
+### Go (any platform)
 
 ```bash
 go install github.com/cyucelen/isola@latest
