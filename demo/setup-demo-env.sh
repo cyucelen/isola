@@ -10,8 +10,9 @@ ISOLA_BIN="${2:-$(pwd)/isola}"
 echo "Setting up demo environment in: $DEMO_DIR"
 echo "Using isola binary: $ISOLA_BIN"
 
-# Clean up existing demo directory
-rm -rf "$DEMO_DIR"
+# Clean up any prior run: the demo repo and the sibling worktree the tape adds
+# (../new-api), so `git worktree add` doesn't fail on a leftover directory.
+rm -rf "$DEMO_DIR" "$(dirname "$DEMO_DIR")/new-api"
 mkdir -p "$DEMO_DIR"
 cd "$DEMO_DIR"
 
@@ -103,6 +104,7 @@ echo "Seeded template database: myapp_dev"
 # Create .isola.toml configuration
 cat > .isola.toml << 'EOF'
 # isola configuration for demo project
+project = "myapp"
 
 [services.frontend]
 command = "python3 server.py"
@@ -115,18 +117,15 @@ command = "python3 server.py"
 dir = "backend"
 port_range = { min = 8100, max = 8199 }
 proxy_port = 8000
+# This worktree's own database, cloned from the myapp_dev template:
+env = { DATABASE_URL = "${accessories.database.url}" }
 
-[env]
-DEMO_MODE = "true"
-
-# Per-worktree database: each worktree gets its own copy of the myapp_dev
-# template, injected into services as DATABASE_URL.
+# Per-worktree database, cloned from the myapp_dev template.
 [accessories.database]
 kind       = "postgres"
 server_url = "postgres://isola:isola@localhost:55432/isola"
 clone_from = "myapp_dev"
 name       = "myapp_${ISOLA_BRANCH_SLUG}"
-inject     = "DATABASE_URL"
 EOF
 
 # Initial commit
@@ -134,7 +133,7 @@ git add .
 git commit -m "Initial commit: demo project setup"
 
 # Create a feature branch (for worktree demo)
-git branch feature/new-api
+git branch new-api
 
 # Add isola to PATH for this session
 export PATH="$(dirname "$ISOLA_BIN"):$PATH"

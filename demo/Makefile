@@ -4,16 +4,16 @@ DEMO_DIR ?= /tmp/isola-demo
 ISOLA_BIN ?= $(shell pwd)/../isola
 OUTPUT_DIR ?= $(shell pwd)
 
-.PHONY: all setup tui workflow clean
+.PHONY: all setup tui workflow clean build
 
 all: tui workflow
 
-# Build isola if not exists
-../isola:
+# Always build a fresh isola so the demo never records a stale binary
+build:
 	cd .. && go build -o isola .
 
 # Setup demo environment (with .isola.toml already configured)
-setup: ../isola
+setup: build
 	@echo "Setting up demo environment..."
 	@chmod +x setup-demo-env.sh
 	@./setup-demo-env.sh "$(DEMO_DIR)" "$(ISOLA_BIN)"

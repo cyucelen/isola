@@ -17,11 +17,20 @@ Set Framerate 30
 Set PlaybackSpeed 1.0
 Set TypingSpeed 40ms
 
+# Show the current folder in the prompt so the active worktree is always clear.
+# clear (inside Hide) wipes the setup line from the buffer before recording resumes.
+Hide
+Type "PS1='\[\033[1;36m\]\W\[\033[0m\] > '"
+Enter
+Type "clear"
+Enter
+Show
+
 # Create a worktree for a branch and enter it
-Type "git worktree add ../demo-feature feature/new-api"
+Type "git worktree add ../new-api new-api"
 Enter
 Sleep 800ms
-Type "cd ../demo-feature"
+Type "cd ../new-api"
 Enter
 Sleep 400ms
 
@@ -40,10 +49,15 @@ Type "isola accessory ls"
 Enter
 Sleep 2200ms
 
-# Tear down
+# Tear down: stop the services
 Type "isola down"
 Enter
-Sleep 1s
+Sleep 1200ms
+
+# isola destroy goes further: it also drops this worktree's database
+Type "isola destroy"
+Enter
+Sleep 2s
 
 # Hold on the final frame so viewers can read it
 Sleep 30s
