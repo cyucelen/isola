@@ -23,8 +23,8 @@ update-ca-certificates. Both require sudo, so you may be prompted for your
 password.
 
 isola normally does this for you on the first HTTPS 'isola up' in a terminal;
-run this command to (re)install trust manually. Run 'isola up' (with HTTPS) or
-'isola proxy start --https' first to generate the CA certificate.`,
+run this command to (re)install trust manually. The CA is generated on the first
+HTTPS 'isola up' (enable HTTPS with [proxy] https = true).`,
 	Annotations: map[string]string{"skipRepoDetection": "true"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		gdir, err := registry.GlobalDir()
@@ -33,7 +33,7 @@ run this command to (re)install trust manually. Run 'isola up' (with HTTPS) or
 		}
 		caPath := cert.CAPath(filepath.Join(gdir, "certs"))
 		if _, err := os.Stat(caPath); os.IsNotExist(err) {
-			return fmt.Errorf("CA certificate not found at %s\nRun 'isola up' (with HTTPS) or 'isola proxy start --https' first to generate certificates", caPath)
+			return fmt.Errorf("CA certificate not found at %s\nEnable HTTPS ([proxy] https = true) and run 'isola up' to generate it", caPath)
 		}
 		if !trust.Supported() {
 			fmt.Printf("Automatic trust store installation is not supported on this OS.\nPlease manually install the CA certificate:\n  %s\n", caPath)
