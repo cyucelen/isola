@@ -8,10 +8,7 @@
 
 <h1 align="center">isola</h1>
 
-**Run many isolated dev environments on one machine, one per git worktree.**
-Each worktree gets its own services (stable ports + `*.localhost` URLs), its own
-environment variables, and its own database cloned from a template. No Docker,
-no `/etc/hosts`, no port juggling, and it's built for the age of parallel AI
+**Run many isolated dev environments on one machine, one per git worktree.** Each worktree gets its own services, its own environment variables, and its own database cloned from a template. No Docker, no `/etc/hosts`, no port juggling, and it's built for the  parallel AI
 coding agents.
 
 ## Why isola
@@ -33,9 +30,6 @@ server is which.
 template, dropped with the worktree). So N branches, or N agents, run fully
 isolated, side by side, and clean up after themselves.
 
-Point your coding agents at it and each one gets a real, working, isolated stack
-to build and test against, without stepping on anything else's ports or data.
-
 ## Features
 
 - **Per-worktree isolation**: every worktree runs as its own environment, with its own processes, ports, URLs, environment variables, and database
@@ -56,9 +50,7 @@ to build and test against, without stepping on anything else's ports or data.
 
 ### Set it up with your coding agent (recommended)
 
-Point your agent at your repo and it installs isola, learns it from the skill,
-and writes a working `.isola.toml` for your services. Paste this into Claude
-Code, Cursor, or Codex:
+Run your agent in your project, paste this, and you're done:
 
 ```text
 Set up isola for this project.
@@ -67,27 +59,26 @@ Set up isola for this project.
 2. Use the `isola-init` skill to do the setup. If it isn't available in this session, follow its guide: https://github.com/cyucelen/isola/blob/main/skills/isola-init/references/setup.md
 ```
 
-Now you can run several agents at once, each with its own real, working stack to
-build and test against, without them fighting over ports or corrupting a shared
-database, and without you narrating a single command.
-
-> **Setting up your next project?** The step above installs the skills once, per
-> machine. After that, skip the prompt entirely: in any new repo just invoke the
-> skill directly and it does the whole setup.
->
-> ```text
-> /isola-init
-> ```
+> **Next project?**
+> `/isola-init` in any new repo.
 
 ### Or set it up manually
 
 #### 1. Install
 
 ```bash
-# Homebrew
+# macOS (Homebrew)
 brew install cyucelen/tap/isola
 
-# Go install
+# Linux (.deb / .rpm are attached to each release):
+#   https://github.com/cyucelen/isola/releases/latest
+sudo dpkg -i isola_*_linux_amd64.deb   # Debian/Ubuntu
+sudo rpm -i  isola_*_linux_amd64.rpm   # Fedora/RHEL
+
+# Arch (AUR)
+yay -S isola-bin
+
+# Any platform with Go
 go install github.com/cyucelen/isola@latest
 
 # Or build from source
@@ -135,14 +126,9 @@ clone_from = "myapp_dev"
 name       = "myapp_${ISOLA_BRANCH_SLUG}"
 ```
 
-The `${...}` reference namespace: `accessories.<name>.url`, `services.<name>.url`,
-`services.<name>.port`, `proxy.ca_cert`. A service opts into an accessory explicitly by
-referencing it (there is no auto-injected key). isola injects each service's env
-into its **process** and (if the service has one) writes it into its **env file**
-so tools that read the file directly get the isolated values too. For the full
-walkthrough see the [isola-init setup guide](skills/isola-init/references/setup.md);
-details are in [Environment Variables](#environment-variables) and
-[Accessories](#accessories).
+Reference a sibling's URL or port, an accessory's connection string, or a
+built-in with `${...}`, and isola resolves each to this worktree's real values.
+Full walkthrough in the [isola-init setup guide](skills/isola-init/references/setup.md).
 
 #### 4. Start services
 
@@ -161,6 +147,46 @@ until `isola proxy stop`; HTTPS and opting out live under
 If you set up by hand, install the agent skill too so your agents can drive isola
 day to day: `npx skills add cyucelen/isola`.
 
+## Worktree setup automation
+
+Each worktree's environment needs to be started (`isola up`) and, when the
+worktree goes away, stopped. Do that by hand, or have isola do it automatically.
+
+### Manual
+
+Run `isola up` in the worktree to start it, `isola down` to stop it:
+
+```bash
+git worktree add ../my-feature -b my-feature
+cd ../my-feature && isola up
+```
+
+### Automatic (git hook)
+
+Install a `post-checkout` hook once and every new worktree comes up on its own:
+
+```bash
+isola hooks install            # just this clone
+isola hooks install --shared   # share with your team
+```
+
+Anything that makes a worktree runs `git worktree add` underneath (your editor, a
+parallel-agent tool like [Orca](https://onorca.dev) or [Herdr](https://herdr.dev),
+or plain git), so this one hook covers them all. It runs `isola up` on new
+worktrees only, and does nothing without a `.isola.toml`.
+
+- **Skip once:** `ISOLA_NO_UP=1 git worktree add ...`
+- **Using Orca?** `isola orca` wires it into `orca.yaml` instead, and the git hook stands down so nothing runs twice.
+- **Check or remove:** `isola hooks status`, `isola hooks uninstall`.
+
+### When a worktree is removed
+
+Git has no worktree-removal hook, so isola reconciles: a removed worktree is torn
+down automatically, its services stopped and the per-worktree databases it
+provisioned dropped, on the next `isola up` and by the shared proxy in the
+background. It only ever drops resources isola created. `isola down --prune` runs
+the same teardown on demand, and `isola destroy` tears down the current worktree.
+
 ## Environment Variables
 
 Each service declares its own `env`. Use `${...}` references and isola fills in
@@ -173,22 +199,10 @@ API_URL      = "${services.api.url}"     # http://feat-login.myapp.localhost:800
 DATABASE_URL = "${accessories.database.url}"   # postgres://.../myapp_feat-login
 ```
 
-Available references: `${services.<name>.url}`, `${services.<name>.direct_url}`,
-`${services.<name>.port}`, `${accessories.<name>.url}`, and `${proxy.ca_cert}`.
-isola also injects built-ins into every process: `PORT`, `ISOLA_BRANCH`,
-`ISOLA_BRANCH_SLUG`, `ISOLA_SERVICE`, and per-sibling `ISOLA_<SERVICE>_URL`,
-`ISOLA_<SERVICE>_DIRECT_URL`, and `ISOLA_<SERVICE>_PORT`.
-
-Two ways to reach a sibling. `${services.<name>.url}` (`ISOLA_<SERVICE>_URL`)
-routes through the proxy, so it needs `*.localhost` to resolve: use it for links
-the browser opens. `${services.<name>.direct_url}` (`ISOLA_<SERVICE>_DIRECT_URL`)
-is a direct `http://127.0.0.1:<port>` to the backend: use it for server-side
-calls between services, since it needs no DNS and works on every OS. See
-[Troubleshooting](docs/troubleshooting.md#server-side-calls-between-services).
-
-Each service's env goes into the **process** and, unless disabled, its **env
-file** (`.env`), so tools that read `.env` directly get the same values. See the
-[Configuration Reference](docs/configuration.md) for precedence and `[env_file]`.
+Reference other services, accessories, and built-ins; isola injects the values
+into the process. It also writes them into the service's `.env` file, updating an
+existing file rather than creating one, so tools that read `.env` directly get the same isolated values. Full
+list in the [Configuration Reference](docs/configuration.md).
 
 ## Accessories
 
@@ -241,72 +255,30 @@ case.
 ## Commands
 
 
-| Command                 | Description                                                     |
-| ----------------------- | --------------------------------------------------------------- |
-| `isola init`            | Create a `.isola.toml` configuration file                       |
-| `isola up`              | Start services for the current worktree                         |
-| `isola up --all`        | Start services for all worktrees                                |
-| `isola up --service`    | Start a specific service only                                   |
-| `isola down`            | Stop services for the current worktree                          |
-| `isola down --all`      | Stop services for all worktrees                                 |
-| `isola down --prune`    | Stop services, then drop deleted worktrees' state and databases |
-| `isola destroy`         | Stop the current worktree's services and drop its database (opposite of `up`) |
-| `isola ls`              | List all worktrees, services, ports, status, and URLs           |
-| `isola logs [worktree]` | Tail a worktree's service logs                                  |
-| `isola accessory`       | Manage per-worktree databases: `ls`, `up`, `reset`, `drop`      |
-| `isola dash`            | Open the interactive TUI dashboard                              |
-| `isola proxy start`     | Start the machine-wide reverse proxy (auto-started by `up`)     |
-| `isola proxy stop`      | Stop the reverse proxy                                          |
-| `isola trust`           | Install the CA certificate into the system trust store          |
+| Command                 | Description                                                                                  |
+| ----------------------- | -------------------------------------------------------------------------------------------- |
+| `isola init`            | Create a `.isola.toml` configuration file                                                    |
+| `isola up`              | Start services for the current worktree                                                      |
+| `isola up --all`        | Start services for all worktrees                                                             |
+| `isola up --service`    | Start a specific service only                                                                |
+| `isola down`            | Stop services for the current worktree                                                       |
+| `isola down --all`      | Stop services for all worktrees                                                              |
+| `isola down --prune`    | Stop services, then drop deleted worktrees' state and databases                              |
+| `isola destroy`         | Stop the current worktree's services and drop its database (opposite of `up`)                |
+| `isola ls`              | List all worktrees, services, ports, status, and URLs                                        |
+| `isola logs [worktree]` | Tail a worktree's service logs                                                               |
+| `isola accessory`       | Manage per-worktree databases: `ls`, `up`, `reset`, `drop`                                   |
+| `isola dash`            | Open the interactive TUI dashboard                                                           |
+| `isola proxy start`     | Start the machine-wide reverse proxy (auto-started by `up`)                                  |
+| `isola proxy stop`      | Stop the reverse proxy                                                                       |
+| `isola trust`           | Install the CA certificate into the system trust store                                       |
 | `isola hooks install`   | Install a git hook that runs `isola up` when a worktree is created (`--shared` to commit it) |
-| `isola orca`            | Add `isola up` to Orca's `orca.yaml` worktree setup hook        |
-| `isola doctor`          | Run diagnostic checks on config and ports                       |
-| `isola version`         | Print version information                                       |
+| `isola orca`            | Add `isola up` to Orca's `orca.yaml` worktree setup hook                                     |
+| `isola doctor`          | Run diagnostic checks on config and ports                                                    |
+| `isola version`         | Print version information                                                                    |
 
 
 HTTPS is enabled per project with `[proxy] https = true` in `.isola.toml` (not a flag).
-
-## Worktree automation
-
-Each worktree's environment needs to be started (`isola up`) and, when the
-worktree goes away, stopped. Do that by hand, or have isola do it automatically.
-
-### Manual
-
-Run `isola up` in the worktree to start it, `isola down` to stop it:
-
-```bash
-git worktree add ../my-feature -b my-feature
-cd ../my-feature && isola up
-```
-
-### Automatic (git hook)
-
-Install a `post-checkout` hook once and every new worktree comes up on its own:
-
-```bash
-isola hooks install            # this clone only
-isola hooks install --shared   # commit .githooks + set core.hooksPath for the team
-```
-
-Every worktree tool (Orca, Herd, your editor, plain `git worktree add`) goes
-through `git worktree add`, which fires `post-checkout`, so this single hook
-covers them all. It runs `isola up` only on a **new** worktree (never on a branch
-switch) and does nothing when there is no `.isola.toml`.
-
-- **Skip once:** `ISOLA_NO_UP=1 git worktree add ...`
-- **Orca:** `isola orca` adds `isola up` to Orca's `orca.yaml` setup hook. If the
-  git hook is also installed it stands down when `orca.yaml` runs isola, so
-  nothing runs twice. No teardown hook is needed (see below).
-- **Inspect or remove:** `isola hooks status`, `isola hooks uninstall`.
-
-### When a worktree is removed
-
-Git has no worktree-removal hook, so isola reconciles: a removed worktree is torn
-down automatically, its services stopped and the per-worktree databases it
-provisioned dropped, on the next `isola up` and by the shared proxy in the
-background. It only ever drops resources isola created. `isola down --prune` runs
-the same teardown on demand, and `isola destroy` tears down the current worktree.
 
 ## How It Works
 
