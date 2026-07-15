@@ -141,6 +141,18 @@ The setup is verified when **all** of these hold:
    left literal); if it reads the environment directly, the working service is
    itself the confirmation.
 
+Then add `.isola/` to `.gitignore` (per-clone state: ports, PIDs, logs, never
+committed) and commit `.isola.toml` so new worktrees inherit the config:
+
+```bash
+grep -qxF '.isola/' .gitignore 2>/dev/null || echo '.isola/' >> .gitignore
+git add .isola.toml .gitignore && git commit -m "Configure isola"
+```
+
+Committing is enough for local worktrees (`git worktree add` off a branch that has
+`.isola.toml` gets a working setup); push only to share the config or to create
+worktrees from the remote.
+
 ## 7. Automate new worktrees (git hook)
 
 Install a `post-checkout` hook so every new worktree starts itself (`isola up` on

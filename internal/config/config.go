@@ -349,44 +349,14 @@ func Init(dir string) (string, error) {
 		return path, fmt.Errorf("%s already exists", FileName)
 	}
 
-	content := `# isola configuration - an isolated dev environment per git worktree
-# See: https://github.com/cyucelen/isola
-
-# --- Project name ---
-# Namespaces this repo across the shared proxy (<branch>.<project>.localhost) and
-# per-worktree Redis. Defaults to this repo's directory name; set it only to
-# override or to resolve a clash with another repo of the same name.
-# project = "myapp"
-
-# --- Files copied into each worktree ---
-# Gitignored files (absent from new worktrees) copied from the main worktree on
-# 'isola up'. Existing files are never overwritten. Defaults to [".env"]; set to
-# [] to disable. Must stay above the [sections] below (it is a top-level key).
-# copy_files = [".env", ".env.*"]
-
-# --- Env files (optional) ---
-# Besides the process environment, isola can write each service's resolved env
-# (your [env], accessory URLs, and any \${...} refs) into an env file the app
-# reads. Resolved relative to each service's dir; a service can override the
-# filename with its own env_file = "..." (or "" to opt out).
-# [env_file]
-# enabled = true    # write env into services' env files
-# create  = false   # only update an existing file (true = create it if missing)
-# path    = ".env"  # default filename, per service dir
-
-# --- Service definitions ---
-# Define services to run per worktree.
-# Each service has its own command, directory, port range, and proxy port.
+	content := `# isola config. Docs: https://github.com/cyucelen/isola
 
 [services.frontend]
 command = "pnpm run dev"
-dir = "frontend"                        # relative to worktree root (empty = root)
-port_range = { min = 3100, max = 3199 } # port allocation range for this service
-proxy_port = 3000                        # proxy listens on this port
+dir = "frontend"
+port_range = { min = 3100, max = 3199 }
+proxy_port = 3000
 
-# Per-service env: injected into the process and written to the env file.
-# Reference isola values with ${...}: services.<name>.url, services.<name>.direct_url,
-# services.<name>.port, accessories.<name>.url, proxy.ca_cert.
 [services.frontend.env]
 API_URL = "${services.backend.url}"
 
@@ -395,41 +365,16 @@ command = "go run ./cmd/server"
 dir = "backend"
 port_range = { min = 8100, max = 8199 }
 proxy_port = 8000
-# Uncomment together with the accessory below:
+
+# Per-worktree database (optional):
+# [accessories.database]
+# kind       = "postgres"
+# server_url = "postgres://USER:PASS@HOST:PORT/postgres"
+# clone_from = "myapp_dev"
+# name       = "myapp_${ISOLA_BRANCH_SLUG}"
+#
 # [services.backend.env]
 # DATABASE_URL = "${accessories.database.url}"
-
-# --- Per-worktree accessories (optional) ---
-# Isolate stateful dependencies per worktree. isola brings up each accessory
-# on 'up' and tears it down on 'down --prune'. It connects to your existing
-# server and never manages the server itself. A service opts in by referencing
-# ${accessories.<name>.url} in its env (there is no auto-injected key).
-#
-# [accessories.database]
-# kind       = "postgres"                                       # driver
-# server_url = "postgres://postgres@localhost:5432/postgres"    # existing server + maintenance db
-# clone_from = "myapp_dev"                                      # seeded template copied per worktree
-# name       = "myapp_${ISOLA_BRANCH_SLUG}"                     # per-worktree database name
-# # url      = "postgres://app:app@localhost:5432/${db}"        # optional URL override (${db} = name)
-#
-# [accessories.cache]
-# kind       = "redis"                                          # per-worktree Redis logical DB
-# server_url = "redis://localhost:6379"
-
-# --- Reverse proxy ---
-# isola auto-starts the proxy on 'up' (http://<branch-slug>.<project>.localhost:<proxy_port>).
-# [proxy]
-# enabled    = true    # set false to start it yourself with 'isola proxy start'
-# https      = false   # serve HTTPS with auto-generated certs
-# auto_trust = true    # with https, trust the CA on first interactive 'up' (set false for manual 'isola trust')
-
-# --- Per-worktree overrides (optional) ---
-# [worktrees.main]
-# services.frontend.port = 3100       # fixed port
-#
-# [worktrees."feature/auth"]
-# services.backend.command = "source .venv/bin/activate && python manage.py runserver --settings=myapp.settings_auth 0.0.0.0:$PORT"
-# services.backend.env = { DEBUG = "1" }
 `
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		return "", fmt.Errorf("writing %s: %w", FileName, err)
