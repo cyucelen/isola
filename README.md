@@ -24,11 +24,14 @@ another, a hotfix on `main`.
 breaks another, and a destructive test on one wipes data the others still need.
 - You're juggling `.env` files, hunting down stray processes, and guessing which
 server is which.
+- Every fresh worktree starts empty: dependencies to install, migrations to run,
+code to generate, all by hand before it will even start.
 
 **isola gives each worktree its own running environment:** processes, ports,
 `*.localhost` URLs, injected env vars, and its own database (cloned from a
-template, dropped with the worktree). So N branches, or N agents, run fully
-isolated, side by side, and clean up after themselves.
+template, dropped with the worktree). It runs each service's setup step first, so
+a fresh worktree installs, migrates, and comes up on its own. So N branches, or N
+agents, run fully isolated, side by side, and clean up after themselves.
 
 ## Features
 
@@ -37,6 +40,7 @@ isolated, side by side, and clean up after themselves.
 - **Automatic ports**: each service gets a stable port, with no clashes between worktrees
 - **Subdomain proxy**: open each worktree in the browser at its own URL, over HTTP or HTTPS, with no hosts-file setup
 - **Environment injection**: each service is handed the port and URLs it needs to reach the others, so nothing is hardcoded
+- **Automatic setup**: each service can declare a setup step (install dependencies, run migrations, generate code) that isola runs before starting it, in the worktree's own environment, so a fresh worktree is ready with no manual prep
 - **AI-agent friendly**: machine-readable output plus an installable [agent skill](#quick-start), so coding agents can drive it
 - **TUI dashboard**: a terminal dashboard to start, stop, and monitor everything at once
 - **Zero dependencies**: just one binary to install, no Docker
