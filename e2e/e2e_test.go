@@ -349,6 +349,50 @@ func TestUpFailsOnCrashingService(t *testing.T) {
 	}
 }
 
+func TestServiceSetupRunsBeforeCommand(t *testing.T) {
+	e := newEnv(t)
+	repo := e.newRepo(`project = "e2esetup"
+
+[proxy]
+enabled = false
+
+[services.web]
+setup = "echo ok > setup-ran.txt"
+command = "sleep 120"
+port_range = { min = 4811, max = 4819 }
+proxy_port = 4810
+`)
+	e.isola(repo, "up")
+	if !e.anyRunning(repo) {
+		t.Fatal("service should be running after up")
+	}
+	if _, err := os.Stat(filepath.Join(repo, "setup-ran.txt")); err != nil {
+		t.Errorf("setup should have run before the service (setup-ran.txt missing): %v", err)
+	}
+}
+
+func TestServiceSetupFailureBlocksService(t *testing.T) {
+	e := newEnv(t)
+	repo := e.newRepo(`project = "e2esetupfail"
+
+[proxy]
+enabled = false
+
+[services.web]
+setup = "exit 3"
+command = "sleep 120"
+port_range = { min = 4821, max = 4829 }
+proxy_port = 4820
+`)
+	out, _ := e.cmd(repo, bin, "up").CombinedOutput()
+	if !strings.Contains(string(out), "setup failed") {
+		t.Errorf("up should report the setup failure; output:\n%s", out)
+	}
+	if e.anyRunning(repo) {
+		t.Error("a service whose setup failed must not be started")
+	}
+}
+
 func TestWorktreeHookLifecycle(t *testing.T) {
 	e := newEnv(t)
 	repo := e.repo("e2ehook")

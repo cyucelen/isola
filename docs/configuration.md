@@ -43,6 +43,7 @@ Define one or more services. Each worktree will run all defined services.
 | Field        | Type         | Required | Description                                                                     |
 | ------------ | ------------ | -------- | ------------------------------------------------------------------------------- |
 | `command`    | string       | yes      | Shell command to start the service                                              |
+| `setup`      | string       | no       | Command run before `command` on each `up` (deps, migrations); runs in `dir` with the service's env. Make it idempotent; failure blocks the service |
 | `dir`        | string       | no       | Working directory relative to worktree root (default: root)                     |
 | `port_range` | `{min, max}` | yes      | Port allocation range for this service                                          |
 | `proxy_port` | int          | yes      | Port the reverse proxy listens on for this service                              |

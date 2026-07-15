@@ -203,7 +203,12 @@ func (c *Config) AccessoryKind(prim toml.Primitive) (string, error) {
 
 // ServiceConfig defines a single service within a worktree.
 type ServiceConfig struct {
-	Command   string            `toml:"command"`
+	Command string `toml:"command"`
+	// Setup runs once before Command on each `isola up`, in the service's Dir
+	// with its full resolved env (accessory URLs included). Use it for install
+	// or migration steps a fresh worktree needs (e.g. "npm install"). Make it
+	// idempotent; if it fails, the service is not started.
+	Setup     string            `toml:"setup,omitempty"`
 	Dir       string            `toml:"dir"`
 	PortRange PortRange         `toml:"port_range"`
 	ProxyPort int               `toml:"proxy_port"`
@@ -353,6 +358,7 @@ func Init(dir string) (string, error) {
 
 [services.frontend]
 command = "pnpm run dev"
+# setup = "pnpm install"              # optional: install/prep, runs before command
 dir = "frontend"
 port_range = { min = 3100, max = 3199 }
 proxy_port = 3000

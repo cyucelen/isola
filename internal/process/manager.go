@@ -218,6 +218,20 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 		// process environment, see this worktree's isolated values.
 		m.writeEnvFile(tree, svcName, dir, cleanRoot, runner.FileEnv())
 
+		// Run the service's setup (install deps, migrations, ...) before starting
+		// it, so a fresh worktree is prepared. A failed setup blocks only this
+		// service; the others still start.
+		if svc.Setup != "" {
+			logging.Info("→ setup %s: %s", svcName, svc.Setup)
+			if setupErr := runner.RunSetup(svc.Setup); setupErr != nil {
+				results = append(results, ServiceResult{
+					Branch: tree.Branch, Service: svcName, Port: p,
+					Err: fmt.Errorf("setup failed: %w", setupErr),
+				})
+				continue
+			}
+		}
+
 		pid, err := runner.Start()
 		if err == nil {
 			// Don't claim success for a service that dies on startup: wait a

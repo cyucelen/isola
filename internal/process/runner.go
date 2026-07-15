@@ -107,6 +107,20 @@ func (r *Runner) Start() (int, error) {
 	return r.cmd.Process.Pid, nil
 }
 
+// RunSetup runs the service's setup command synchronously in its working
+// directory with the same resolved environment the service gets (accessory
+// URLs, ${...} refs, $PORT, ISOLA_*), before the service starts. Output is
+// inherited so install/migration progress is visible. Returns the command's
+// exit error, if any.
+func (r *Runner) RunSetup(setupCmd string) error {
+	cmd := exec.Command("sh", "-c", setupCmd)
+	cmd.Dir = r.config.Dir
+	cmd.Env = r.buildEnv()
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 // Stop sends SIGTERM then SIGKILL to the process group.
 func (r *Runner) Stop() error {
 	if r.logFile != nil {
