@@ -49,6 +49,12 @@ proxy_port = 3000                          # the URL you hit: <branch>.<project>
   (`next dev -p $PORT`, `0.0.0.0:$PORT` for Django, `server.port` in
   `vite.config.ts`). A service that ignores `$PORT` looks `running` on a port
   nothing answers.
+- If a fresh worktree needs a prep step before the app runs (a new working dir
+  has no `node_modules`, un-run migrations, or ungenerated code), add
+  `setup = "..."` to the service (e.g. `setup = "npm install"`). It runs before
+  `command` on each `up`, in the service's `dir` with its env (so migrations see
+  the per-worktree `DATABASE_URL`). Keep it idempotent; a failed setup blocks
+  that service.
 - Give each service a unique `port_range` and `proxy_port`.
 - `project` defaults to the repo's directory name; set it at the top only to
   override that or resolve a clash with another repo of the same name.
@@ -233,3 +239,28 @@ the CA into Firefox manually.
 
 If any check fails, see
 [Troubleshooting](https://github.com/cyucelen/isola/blob/main/docs/troubleshooting.md).
+
+## 9. Tell the user what's next
+
+Finish by giving the user a short, readable summary of where things stand and
+what they can do next. Tailor it to what you actually set up and keep it concise.
+Cover:
+
+- **It's running.** The services and their URLs (from `isola ls`).
+- **What you committed and why.** `.isola.toml` is committed so every new
+  worktree inherits the setup; `.isola/` is gitignored (per-clone state).
+- **Try it yourself.** Create an isolated worktree and watch it come up on its
+  own ports, URLs, and database:
+
+  ```bash
+  git worktree add ../<name> -b <name>
+  ```
+
+  With the git hook installed it starts on its own; otherwise `cd ../<name> &&
+  isola up`. Remove it with `git worktree remove ../<name>` and isola tears down
+  the leftover services and database.
+- **HTTPS, if wanted.** Set `https = true` under `[proxy]` in `.isola.toml`, then
+  `isola down && isola proxy stop && isola up`; trust the CA once with
+  `isola trust` (or accept the prompt on the first interactive `up`).
+- **Day to day.** `isola ls` (status + URLs), `isola dash` (TUI), `isola down`
+  (stop this worktree), `isola destroy` (stop + drop this worktree's database).
