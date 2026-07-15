@@ -47,19 +47,26 @@ changelog:
       - Merge pull request
       - Merge branch
 
-brews:
-  - repository:
+homebrew_casks:
+  - name: isola
+    binaries:
+      - isola
+    repository:
       owner: cyucelen
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
+    directory: Casks
     homepage: https://github.com/cyucelen/isola
     description: "Isolated dev environment for every git worktree: ports, proxy, and databases"
     license: MIT
-    install: |
-      bin.install "isola"
-    test: |
-      system "#{bin}/isola", "version"
+    # macOS quarantines downloaded unsigned binaries; strip the flag so `isola`
+    # runs without a Gatekeeper "unverified developer" prompt.
+    hooks:
+      post:
+        install: |
+          if OS.mac? && File.exist?("#{staged_path}/isola")
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/isola"]
+          end
 
 nfpms:
   - id: isola
@@ -73,6 +80,23 @@ nfpms:
       - deb
       - rpm
     bindir: /usr/bin
+
+aurs:
+  - name: isola-bin
+    homepage: https://github.com/cyucelen/isola
+    description: "Isolated dev environment for every git worktree: ports, proxy, and databases"
+    maintainers:
+      - "cyucelen <cagatayyucelen@gmail.com>"
+    license: MIT
+    private_key: "{{ .Env.AUR_KEY }}"
+    git_url: "ssh://aur@aur.archlinux.org/isola-bin.git"
+    provides:
+      - isola
+    conflicts:
+      - isola
+    package: |-
+      install -Dm755 "./isola" "${pkgdir}/usr/bin/isola"
+      install -Dm644 "./LICENSE" "${pkgdir}/usr/share/licenses/isola-bin/LICENSE"
 
 release:
   github:
