@@ -39,17 +39,28 @@ func TestValidate(t *testing.T) {
 			svc := c.Services["web"]
 			svc.PortRange = PortRange{Min: 0, Max: 3199}
 			c.Services["web"] = svc
-		}, "must be positive"},
+		}, "positive min and max"},
 		{"bad port range order", func(c *Config) {
 			svc := c.Services["web"]
 			svc.PortRange = PortRange{Min: 4000, Max: 3000}
 			c.Services["web"] = svc
 		}, "must be <="},
-		{"zero proxy port", func(c *Config) {
+		{"internal service: port, no proxy", func(c *Config) {
 			svc := c.Services["web"]
 			svc.ProxyPort = 0
 			c.Services["web"] = svc
-		}, "proxy_port must be positive"},
+		}, ""},
+		{"background process: no port, no proxy", func(c *Config) {
+			svc := c.Services["web"]
+			svc.PortRange = PortRange{}
+			svc.ProxyPort = 0
+			c.Services["web"] = svc
+		}, ""},
+		{"proxy port without a port range", func(c *Config) {
+			svc := c.Services["web"]
+			svc.PortRange = PortRange{}
+			c.Services["web"] = svc
+		}, "proxy_port needs a port_range"},
 		{"duplicate proxy port", func(c *Config) {
 			c.Services["api"] = ServiceConfig{
 				Command:   "go run .",
@@ -91,6 +102,33 @@ func TestValidate(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A background process sits alongside listening services: it must validate
+// (no false "overlapping port ranges [0-0]" against a real service) and it must
+// not contribute a proxy route.
+func TestBackgroundProcessAlongsideServices(t *testing.T) {
+	cfg := &Config{
+		Services: map[string]ServiceConfig{
+			"web": {
+				Command:   "npm start",
+				PortRange: PortRange{Min: 3100, Max: 3199},
+				ProxyPort: 3000,
+			},
+			"worker": {Command: "npm run worker"}, // no port_range, no proxy_port
+			"cron":   {Command: "npm run cron"},   // a second background process
+		},
+		Worktrees: map[string]WTOverride{},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() with background processes: %v", err)
+	}
+
+	ports := cfg.ProxyPorts()
+	if len(ports) != 1 || ports[0] != 3000 {
+		t.Errorf("ProxyPorts() = %v, want [3000] (background processes contribute none)", ports)
 	}
 }
 

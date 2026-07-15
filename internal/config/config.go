@@ -181,6 +181,9 @@ func (c *Config) ProxyPorts() []int {
 	seen := map[int]bool{}
 	var ports []int
 	for _, svc := range c.Services {
+		if svc.ProxyPort <= 0 {
+			continue // background process: no proxy route
+		}
 		if !seen[svc.ProxyPort] {
 			seen[svc.ProxyPort] = true
 			ports = append(ports, svc.ProxyPort)
@@ -285,20 +288,28 @@ func (c *Config) Validate() error {
 		if svc.Command == "" {
 			return fmt.Errorf("service %q: command must not be empty", name)
 		}
-		if svc.PortRange.Min <= 0 || svc.PortRange.Max <= 0 {
-			return fmt.Errorf("service %q: port_range.min and port_range.max must be positive", name)
+		// A service with neither port_range nor proxy_port is a background
+		// process (a worker, a queue consumer): isola runs and manages it with
+		// env injection, but allocates no $PORT and adds no proxy route or URL.
+		hasRange := svc.PortRange.Min > 0 || svc.PortRange.Max > 0
+		if hasRange {
+			if svc.PortRange.Min <= 0 || svc.PortRange.Max <= 0 {
+				return fmt.Errorf("service %q: port_range needs both a positive min and max", name)
+			}
+			if svc.PortRange.Min > svc.PortRange.Max {
+				return fmt.Errorf("service %q: port_range.min (%d) must be <= port_range.max (%d)",
+					name, svc.PortRange.Min, svc.PortRange.Max)
+			}
 		}
-		if svc.PortRange.Min > svc.PortRange.Max {
-			return fmt.Errorf("service %q: port_range.min (%d) must be <= port_range.max (%d)",
-				name, svc.PortRange.Min, svc.PortRange.Max)
+		if svc.ProxyPort > 0 {
+			if !hasRange {
+				return fmt.Errorf("service %q: proxy_port needs a port_range (the backend port to route to); omit both for a background process", name)
+			}
+			if existing, ok := proxyPorts[svc.ProxyPort]; ok {
+				return fmt.Errorf("services %q and %q have the same proxy_port %d", existing, name, svc.ProxyPort)
+			}
+			proxyPorts[svc.ProxyPort] = name
 		}
-		if svc.ProxyPort <= 0 {
-			return fmt.Errorf("service %q: proxy_port must be positive", name)
-		}
-		if existing, ok := proxyPorts[svc.ProxyPort]; ok {
-			return fmt.Errorf("services %q and %q have the same proxy_port %d", existing, name, svc.ProxyPort)
-		}
-		proxyPorts[svc.ProxyPort] = name
 	}
 
 	// Validate per-worktree port overrides are within range
@@ -337,6 +348,10 @@ func (c *Config) Validate() error {
 		for j := i + 1; j < len(svcNames); j++ {
 			a := c.Services[svcNames[i]]
 			b := c.Services[svcNames[j]]
+			// Background processes have no port_range; they can't overlap.
+			if a.PortRange.Max <= 0 || b.PortRange.Max <= 0 {
+				continue
+			}
 			if a.PortRange.Min <= b.PortRange.Max && b.PortRange.Min <= a.PortRange.Max {
 				return fmt.Errorf("services %q and %q have overlapping port ranges [%d-%d] and [%d-%d]",
 					svcNames[i], svcNames[j], a.PortRange.Min, a.PortRange.Max, b.PortRange.Min, b.PortRange.Max)

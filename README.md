@@ -123,6 +123,12 @@ proxy_port = 8000
 [services.api.env]
 DATABASE_URL = "${accessories.database.url}"
 
+# A background worker: no port_range/proxy_port, so no $PORT and no URL.
+# isola still runs, manages, and injects env into it.
+[services.worker]
+command = "pnpm run worker"
+dir = "api"
+
 # A per-worktree database, cloned from a seeded template:
 [accessories.database]
 kind       = "postgres"

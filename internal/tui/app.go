@@ -71,15 +71,8 @@ func NewModel(cfg *config.Config, repoRoot, stateRoot string) (*Model, error) {
 		return nil, fmt.Errorf("listing worktrees: %w", err)
 	}
 
-	// Collect proxy ports.
-	var proxyPorts []int
-	seen := map[int]bool{}
-	for _, svc := range cfg.Services {
-		if !seen[svc.ProxyPort] {
-			seen[svc.ProxyPort] = true
-			proxyPorts = append(proxyPorts, svc.ProxyPort)
-		}
-	}
+	// Collect proxy ports (background processes have none).
+	proxyPorts := cfg.ProxyPorts()
 	sort.Ints(proxyPorts)
 
 	return &Model{
@@ -347,6 +340,9 @@ func (m *Model) openSelected() tea.Msg {
 	svc, ok := m.cfg.Services[row.Service]
 	if !ok {
 		return ActionResultMsg{Message: "Unknown service", IsError: true}
+	}
+	if svc.ProxyPort <= 0 {
+		return ActionResultMsg{Message: fmt.Sprintf("%s is a background process, it has no URL", row.Service), IsError: true}
 	}
 
 	// The scheme follows this project's proxy config.

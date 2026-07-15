@@ -159,6 +159,9 @@ func checkPortConflicts(cfg *config.Config) []checkResult {
 	var results []checkResult
 	for _, name := range names {
 		port := cfg.Services[name].ProxyPort
+		if port <= 0 {
+			continue // background process: no proxy port to check
+		}
 		label := fmt.Sprintf("proxy port %d (%s) available", port, name)
 		switch {
 		case process.IsPortAvailable(port):

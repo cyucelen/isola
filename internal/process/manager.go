@@ -103,8 +103,12 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 	services := m.targetServices(serviceFilter)
 
 	// First allocate all ports so cross-service env vars are available.
+	// Background processes (no port_range) get no port.
 	portMap := map[string]int{}
 	for _, svcName := range services {
+		if m.cfg.Services[svcName].PortRange.Max <= 0 {
+			continue // background process: nothing to allocate
+		}
 		p, err := m.registry.AssignPort(tree.Branch, svcName)
 		if err != nil {
 			results = append(results, ServiceResult{
@@ -115,10 +119,13 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 		portMap[svcName] = p
 	}
 
-	// Build proxy port map for cross-service URLs.
+	// Build proxy port map for cross-service URLs. Background processes and
+	// internal (unproxied) services contribute no route.
 	proxyPorts := map[string]int{}
 	for svcName, svc := range m.cfg.Services {
-		proxyPorts[svcName] = svc.ProxyPort
+		if svc.ProxyPort > 0 {
+			proxyPorts[svcName] = svc.ProxyPort
+		}
 	}
 
 	// The scheme for ISOLA_<SVC>_URL follows this project's proxy config; the
@@ -139,9 +146,11 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 
 	for _, svcName := range services {
 		p, ok := portMap[svcName]
-		if !ok {
+		if !ok && m.cfg.Services[svcName].PortRange.Max > 0 {
 			continue // port allocation failed, already reported
 		}
+		// A background process has no port: p stays 0 and the availability
+		// check below is skipped.
 
 		// Clean up stale processes (dead PIDs recorded as running).
 		m.cleanStale(tree.Branch, svcName)
@@ -158,7 +167,7 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 
 		// Check if port is available. If not, the port is held by a foreign
 		// process (an orphan, or something outside isola).
-		if !IsPortAvailable(p) {
+		if p > 0 && !IsPortAvailable(p) {
 			results = append(results, ServiceResult{
 				Branch: tree.Branch, Service: svcName, Port: p,
 				Err: fmt.Errorf("port %d is already in use (orphan process?)", p),

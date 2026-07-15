@@ -3,6 +3,7 @@ package process
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -373,6 +374,74 @@ func TestManagerStartStopServices(t *testing.T) {
 	}
 	if ss.Status != state.StatusStopped {
 		t.Errorf("state status after stop = %q, want %q", ss.Status, state.StatusStopped)
+	}
+}
+
+func TestManagerStartBackgroundProcess(t *testing.T) {
+	dir := t.TempDir()
+	store, err := state.NewFileStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A worker with neither port_range nor proxy_port: a first-class background
+	// process. It should run and be managed, but get no port and no $PORT.
+	envFile := filepath.Join(t.TempDir(), "worker.env")
+	cfg := &config.Config{
+		Services: map[string]config.ServiceConfig{
+			"worker": {
+				Command: fmt.Sprintf("printenv > %s; sleep 60", envFile),
+			},
+		},
+		Worktrees: map[string]config.WTOverride{},
+	}
+
+	registry := port.NewRegistry(store, cfg)
+	mgr := NewManager(cfg, store, registry)
+	tree := &git.Worktree{Path: t.TempDir(), Branch: "main"}
+
+	results := mgr.StartServices(tree, "worker")
+	if len(results) != 1 {
+		t.Fatalf("StartServices returned %d results, want 1", len(results))
+	}
+	r := results[0]
+	if r.Err != nil {
+		t.Fatalf("StartServices error: %v", r.Err)
+	}
+	if r.PID <= 0 {
+		t.Errorf("expected positive PID, got %d", r.PID)
+	}
+	if r.Port != 0 {
+		t.Errorf("background process got port %d, want 0", r.Port)
+	}
+
+	// The command should have run with the isola env but no PORT.
+	var env []byte
+	for i := 0; i < 50; i++ {
+		if env, err = os.ReadFile(envFile); err == nil && len(env) > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(env) == 0 {
+		t.Fatal("background process did not write its environment")
+	}
+	envStr := string(env)
+	if strings.Contains(envStr, "\nPORT=") || strings.HasPrefix(envStr, "PORT=") {
+		t.Errorf("background process should not receive $PORT, got env:\n%s", envStr)
+	}
+	if !strings.Contains(envStr, "ISOLA_SERVICE=worker") {
+		t.Errorf("background process missing ISOLA_SERVICE, got env:\n%s", envStr)
+	}
+
+	// A background process is fully managed: stopping it must succeed like any
+	// other service.
+	stop := mgr.StopServices(tree, "worker")
+	if len(stop) != 1 {
+		t.Fatalf("StopServices returned %d results, want 1", len(stop))
+	}
+	if stop[0].Err != nil {
+		t.Errorf("stopping a background process errored: %v", stop[0].Err)
 	}
 }
 

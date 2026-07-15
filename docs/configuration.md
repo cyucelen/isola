@@ -45,10 +45,16 @@ Define one or more services. Each worktree will run all defined services.
 | `command`    | string       | yes      | Shell command to start the service                                              |
 | `setup`      | string       | no       | Command run before `command` on each `up` (deps, migrations); runs in `dir` with the service's env. Make it idempotent; failure blocks the service |
 | `dir`        | string       | no       | Working directory relative to worktree root (default: root)                     |
-| `port_range` | `{min, max}` | yes      | Port allocation range for this service                                          |
-| `proxy_port` | int          | yes      | Port the reverse proxy listens on for this service                              |
+| `port_range` | `{min, max}` | no       | Port allocation range. Omit for a background process that doesn't listen (see below) |
+| `proxy_port` | int          | no       | Port the reverse proxy listens on for this service. Needs a `port_range` (the backend to route to); omit both for a background process |
 | `env`        | table        | no       | Environment for this service; values may reference `${...}` (see below)         |
 | `env_file`   | string       | no       | Env-file name for this service (relative to `dir`); overrides [`[env_file]`](#env_file) `path`; `""` opts out |
+
+A service takes one of three shapes, by which port fields you set:
+
+- **Web service** (`port_range` + `proxy_port`): isola allocates a `$PORT`, and the proxy publishes it at `<slug>.<project>.localhost:<proxy_port>`.
+- **Internal service** (`port_range` only): gets a `$PORT` and is reachable by siblings via `${services.<name>.direct_url}`, but has no browser URL.
+- **Background process** (neither): a worker or queue consumer. isola runs and manages it (env, logs, `setup`, reconcile) with no `$PORT`, no route, and no URL.
 
 ```toml
 [services.frontend]
@@ -59,6 +65,11 @@ proxy_port = 3000
 
 [services.frontend.env]
 API_URL = "${services.backend.url}"
+
+# A background worker: no port, no URL, still started and managed.
+[services.worker]
+command = "pnpm run worker"
+dir = "backend"
 ```
 
 Env values can reference isola-provided sources with `${...}`:

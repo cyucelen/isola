@@ -157,6 +157,7 @@ type lsEntry struct {
 	Port     int    `json:"port"`
 	Status   string `json:"status"`
 	PID      int    `json:"pid"`
+	URL      string `json:"url"`
 }
 
 func (e *env) ls(dir string) []lsEntry {
@@ -390,6 +391,53 @@ proxy_port = 4820
 	}
 	if e.anyRunning(repo) {
 		t.Error("a service whose setup failed must not be started")
+	}
+}
+
+func TestBackgroundProcessRunsWithoutPortOrURL(t *testing.T) {
+	e := newEnv(t)
+	// web is proxied; worker has neither port_range nor proxy_port, so it is a
+	// first-class background process: it runs and is managed, but gets no port,
+	// no proxy route, and no URL.
+	repo := e.newRepo(`project = "e2eportless"
+
+[proxy]
+enabled = true
+
+[services.web]
+command = "sleep 120"
+port_range = { min = 4971, max = 4979 }
+proxy_port = 4970
+
+[services.worker]
+command = "sleep 120"
+`)
+	e.isola(repo, "up")
+	e.waitRunning(repo, "main")
+
+	byService := map[string]lsEntry{}
+	for _, entry := range e.ls(repo) {
+		byService[entry.Service] = entry
+	}
+	web, okWeb := byService["web"]
+	worker, okWorker := byService["worker"]
+	if !okWeb || !okWorker {
+		t.Fatalf("expected both web and worker in ls, got %v", byService)
+	}
+	if web.Status != "running" || worker.Status != "running" {
+		t.Fatalf("both services should run: web=%s worker=%s", web.Status, worker.Status)
+	}
+	if worker.Port != 0 {
+		t.Errorf("background process got port %d, want 0", worker.Port)
+	}
+	if worker.URL != "" {
+		t.Errorf("background process got URL %q, want none", worker.URL)
+	}
+	if web.Port == 0 {
+		t.Error("web should have an allocated port")
+	}
+	if web.URL == "" {
+		t.Error("web should have a proxy URL")
 	}
 }
 

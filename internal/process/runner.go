@@ -239,10 +239,14 @@ func (r *Runner) scheme() string {
 // builtins returns the isola auto-injected variables for this service.
 func (r *Runner) builtins() map[string]string {
 	m := map[string]string{
-		"PORT":              fmt.Sprintf("%d", r.config.Port),
 		"ISOLA_BRANCH":      r.config.Branch,
 		"ISOLA_BRANCH_SLUG": r.config.BranchSlug,
 		"ISOLA_SERVICE":     r.config.ServiceName,
+	}
+	// A background process (no port_range) gets no $PORT; only services that
+	// actually listen do.
+	if r.config.Port > 0 {
+		m["PORT"] = fmt.Sprintf("%d", r.config.Port)
 	}
 	for svcName, svcPort := range r.config.AllServicePorts {
 		up := strings.ToUpper(svcName)
