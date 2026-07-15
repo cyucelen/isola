@@ -40,15 +40,18 @@ port_range = { min = 3100, max = 3199 }    # a stable per-branch port lives here
 proxy_port = 3000                          # the URL you hit: <branch>.<project>.localhost:3000
 ```
 
-- Take each `command` and `dir` from the project's own dev scripts (its
-  `package.json` scripts, `Procfile`, `Makefile`, or compose), not from these
-  examples. Don't assume a stack.
+- **Use the project's own run command; don't invent one.** If `package.json` has
+  `"dev": "vite"`, the service `command` is `npm run dev` (use the repo's package
+  manager: pnpm/yarn/bun), taken from `package.json` scripts, `Procfile`,
+  `Makefile`, or compose. Don't assume a stack, and don't hand-write a raw
+  `npx vite …` when a script already exists.
 - Each service must **listen on the injected `$PORT`**. Many dev servers already
   read `PORT` from the environment (Node's `process.env.PORT`, Rails, etc.) and
-  need no change; only adapt the command when it hardcodes a port or needs a flag
-  (`next dev -p $PORT`, `0.0.0.0:$PORT` for Django, `server.port` in
-  `vite.config.ts`). A service that ignores `$PORT` looks `running` on a port
-  nothing answers.
+  need no change. When one needs a flag, **extend the existing script** rather
+  than replacing it: `npm run dev -- --port $PORT` (everything after `--` is
+  passed through to the underlying tool). A service that ignores `$PORT` looks
+  `running` on a port nothing answers. Only hand-write a raw command when the
+  project has no script for it.
 - If a fresh worktree needs a prep step before the app runs (a new working dir
   has no `node_modules`, un-run migrations, or ungenerated code), add
   `setup = "..."` to the service (e.g. `setup = "npm install"`). It runs before
