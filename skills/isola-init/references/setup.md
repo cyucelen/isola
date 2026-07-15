@@ -18,12 +18,15 @@ check. Don't proceed until `isola version` works. If the skill isn't active and
 you reached this guide by URL, install.md is alongside it at
 https://github.com/cyucelen/isola/blob/main/skills/isola-init/references/install.md
 
-## 2. Discover the dev processes
+## 2. Discover the project and its environment
 
 List every long-running process you'd normally start by hand: a web app, an API,
 a worker, etc. Look at whatever the repo actually has: `package.json` scripts, a
 `Makefile`, `Procfile`, `docker-compose.yml`, `mix.exs`, `Cargo.toml`,
-`manage.py`, `Gemfile`, `go.mod`. There may be one service or several.
+`manage.py`, `Gemfile`, `go.mod`. There may be one service or several. Also note
+how each is started and what stateful dependencies it needs (a database, a cache)
+and how those actually run on *this* machine. Work it out from the repo and the
+system in front of you; don't assume a language, framework, or tool.
 
 ## 3. Create and edit `.isola.toml`
 
@@ -87,14 +90,17 @@ name       = "myapp_${ISOLA_BRANCH_SLUG}"
 DATABASE_URL = "${accessories.database.url}"
 ```
 
-**Read the real connection from the project; do not copy the example.** Take the
-host, port, user, password, and database name from the project's own config
-(`docker-compose.yml` ports, `.env`/`.env.local` `DATABASE_URL`, ORM config) and
-confirm with `docker ps`. A stray copy of `localhost:5432` can silently hit a
-different server. `server_url` points at the server's maintenance database
-(usually `/postgres`), used only to create and drop databases; `clone_from` is
-the existing dev database to copy. isola terminates any lingering connections to
-`clone_from` automatically before cloning, so it need not be idle.
+**Discover the real connection; do not copy the example.** Find the connection
+string the project already uses (`.env`/`.env.local`, ORM or framework config)
+and work out how its database actually runs and is reachable on *this* machine.
+Don't assume a stack: it might be docker-compose, a natively installed Postgres,
+a shared dev server, or a managed/cloud instance. Don't assume a default port
+either; confirm what is actually listening. A stray copy of `localhost:5432` can
+silently hit a different server. `server_url` must point at the running server's
+maintenance database (one the configured user can connect to and use to create
+and drop databases, usually `postgres`); `clone_from` is the existing dev database
+to copy. isola terminates lingering connections to `clone_from` automatically
+before cloning, so it need not be idle.
 
 isola connects to your existing server (it never manages one). If the project
 needs a stateful service isola doesn't support yet (MySQL, MongoDB, a queue, …),
