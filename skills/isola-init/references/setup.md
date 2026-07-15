@@ -37,9 +37,15 @@ port_range = { min = 3100, max = 3199 }    # a stable per-branch port lives here
 proxy_port = 3000                          # the URL you hit: <branch>.<project>.localhost:3000
 ```
 
-- Each command **must bind the injected `$PORT`** (adapt per framework: `next dev
-  -p $PORT`, `server.port` in `vite.config.ts`, `0.0.0.0:$PORT` for Django, etc.).
-  A service that ignores `$PORT` will look `running` on a port nothing answers.
+- Take each `command` and `dir` from the project's own dev scripts (its
+  `package.json` scripts, `Procfile`, `Makefile`, or compose), not from these
+  examples. Don't assume a stack.
+- Each service must **listen on the injected `$PORT`**. Many dev servers already
+  read `PORT` from the environment (Node's `process.env.PORT`, Rails, etc.) and
+  need no change; only adapt the command when it hardcodes a port or needs a flag
+  (`next dev -p $PORT`, `0.0.0.0:$PORT` for Django, `server.port` in
+  `vite.config.ts`). A service that ignores `$PORT` looks `running` on a port
+  nothing answers.
 - Give each service a unique `port_range` and `proxy_port`.
 - `project` defaults to the repo's directory name; set it at the top only to
   override that or resolve a clash with another repo of the same name.
@@ -73,13 +79,22 @@ own isolated instance, and reference it from the services that need it:
 ```toml
 [accessories.database]
 kind       = "postgres"
-server_url = "postgres://postgres@localhost:5432/postgres"   # your existing server
-clone_from = "myapp_dev"                                     # a seeded, quiescent template db
+server_url = "postgres://USER:PASS@HOST:PORT/postgres"   # existing server, maintenance db
+clone_from = "myapp_dev"                                 # the dev database to copy per worktree
 name       = "myapp_${ISOLA_BRANCH_SLUG}"
 
 [services.api.env]
 DATABASE_URL = "${accessories.database.url}"
 ```
+
+**Read the real connection from the project; do not copy the example.** Take the
+host, port, user, password, and database name from the project's own config
+(`docker-compose.yml` ports, `.env`/`.env.local` `DATABASE_URL`, ORM config) and
+confirm with `docker ps`. A stray copy of `localhost:5432` can silently hit a
+different server. `server_url` points at the server's maintenance database
+(usually `/postgres`), used only to create and drop databases; `clone_from` is
+the existing dev database to copy. isola terminates any lingering connections to
+`clone_from` automatically before cloning, so it need not be idle.
 
 isola connects to your existing server (it never manages one). If the project
 needs a stateful service isola doesn't support yet (MySQL, MongoDB, a queue, …),

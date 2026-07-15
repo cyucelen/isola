@@ -384,9 +384,9 @@ dir = "frontend"                        # relative to worktree root (empty = roo
 port_range = { min = 3100, max = 3199 } # port allocation range for this service
 proxy_port = 3000                        # proxy listens on this port
 # Per-service env: injected into the process and written to the env file.
-# Reference isola values with ${...}: accessories.<name>.url, services.<name>.url,
-# services.<name>.port.
-env = { NODE_ENV = "development", API_URL = "${services.backend.url}" }
+# Reference isola values with ${...}: services.<name>.url, services.<name>.direct_url,
+# services.<name>.port, accessories.<name>.url, proxy.ca_cert.
+env = { API_URL = "${services.backend.url}" }
 
 [services.backend]
 command = "go run ./cmd/server"
