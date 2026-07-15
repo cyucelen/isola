@@ -58,6 +58,14 @@ proxy_port = 3000                          # the URL you hit: <branch>.<project>
 - Give each service a unique `port_range` and `proxy_port`.
 - `project` defaults to the repo's directory name; set it at the top only to
   override that or resolve a clash with another repo of the same name.
+- **Gitignored files are copied into each new worktree** on `up`. `copy_files`
+  (a top-level key, default `[".env"]`) lists globs copied from the main worktree
+  (git omits gitignored files from new worktrees), never overwriting; `[]`
+  disables it. Keep it above the `[sections]`. This is how a worktree gets a
+  `.env` that lives only in the main checkout.
+- **Per-branch overrides** live in `[worktrees."<branch>"]`: override a service's
+  `command`, pin a fixed `port` (within its `port_range`), or add `env`. Useful
+  for keeping `main` on a stable port.
 
 ## 4. Wire each service's environment
 
@@ -78,7 +86,9 @@ proxy (use for browser links); `services.<name>.direct_url` is a direct
 works on every OS). isola delivers each service's env into its **process**
 and (unless disabled) into its **env file**, so tools that read `.env` /
 `.env.local` directly get the same isolated values. A service can set its own
-`env_file = "..."` (relative to `dir`); the default is `.env`.
+`env_file = "..."` (relative to `dir`); the default is `.env`. Only the explicit
+`${...}` form is expanded; a bare `$` is left literal, so a value like `p$ssw0rd`
+survives unchanged.
 
 ## 5. Per-worktree databases (accessories)
 
@@ -106,7 +116,20 @@ silently hit a different server. `server_url` must point at the running server's
 maintenance database (one the configured user can connect to and use to create
 and drop databases, usually `postgres`); `clone_from` is the existing dev database
 to copy. isola terminates lingering connections to `clone_from` automatically
-before cloning, so it need not be idle.
+before cloning, so it need not be idle. If the app connects as a different
+role/host than the admin `server_url`, set `url = "postgres://app:app@HOST:PORT/${db}"`
+(`${db}` expands to the resolved `name`).
+
+For **Redis** the shape is simpler (no template; each worktree gets a numbered
+logical DB, and the injected URL is the server URL with that index as its path,
+e.g. `redis://host:6379/3`):
+
+```toml
+[accessories.cache]
+kind       = "redis"
+server_url = "redis://localhost:6379"   # rediss:// works too
+# databases = 16                         # set only if the server exposes other than 16 DBs
+```
 
 isola connects to your existing server (it never manages one). If the project
 needs a stateful service isola doesn't support yet (MySQL, MongoDB, a queue, …),

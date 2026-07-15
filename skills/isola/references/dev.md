@@ -25,8 +25,10 @@ isola up                     # start all services for the current worktree
 isola up --service frontend  # just one service
 isola up --all               # start every worktree's services
 
-isola down                   # stop the current worktree's services
-isola down --all             # stop everything
+isola down                    # stop the current worktree's services
+isola down --service frontend # stop just one service
+isola down --all              # stop everything
+isola destroy                 # stop the current worktree AND drop its per-worktree databases
 ```
 
 Services are detached and keep running after the command returns; use `isola down`
@@ -77,9 +79,15 @@ isola logs <worktree>      # a specific worktree
 
 ## Cleaning up
 
-After removing a worktree with `git worktree remove`, drop its leftover state
-(and any per-worktree databases) with:
+Git has no worktree-removal hook, so isola reconciles removed worktrees
+**automatically**: on the next `isola up` and on the shared proxy's background
+timer (~30s) it stops a removed worktree's leftover services and drops the
+per-worktree databases it provisioned (only resources isola created). To force
+it immediately:
 
 ```bash
-isola down --prune
+isola down --prune           # reconcile removed worktrees now
 ```
+
+To tear down the **current** worktree on demand (stop its services + drop its
+databases), use `isola destroy`.

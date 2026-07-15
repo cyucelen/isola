@@ -67,7 +67,7 @@ The install is good when all three succeed:
 
 ```bash
 isola version          # prints a version string (binary is on PATH and runs)
-isola --help           # lists commands: init, up, down, ls, doctor, accessory, proxy, trust
+isola --help           # lists all commands (up, down, destroy, ls, dash, logs, proxy, accessory, hooks, orca, doctor, trust, ...)
 isola doctor           # from any git repo: the "git installed" check passes
 ```
 

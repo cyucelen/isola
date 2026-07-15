@@ -17,10 +17,11 @@ has no `add`/`remove`.
 ```bash
 isola init                     # create .isola.toml
 isola up [--all] [--service X] # start services + auto-start the proxy (background)
-isola down [--all] [--prune]   # stop services; --prune tears down deleted worktrees
+isola down [--all] [--service X] [--prune]  # stop services; --prune tears down removed worktrees
+isola destroy                  # stop + drop the current worktree's services and databases
 isola ls [--json]              # worktrees, services, ports, status, URLs
 isola dash                     # interactive TUI
-isola proxy start [--https]    # run the proxy manually (up auto-starts it); [proxy] enabled=false to opt out
+isola proxy start              # run the proxy manually (up auto-starts it); [proxy] enabled=false to opt out; HTTPS via [proxy] https=true
 isola proxy stop               # stop the proxy (it is never auto-stopped)
 isola logs [worktree] [-f] [-n N] [-s svc]
 isola accessory ls|up|reset|drop [name]           # per-worktree databases (up = bring up / reuse)
@@ -43,7 +44,7 @@ worktree, never overwriting.
 Read the file that matches the task (don't load them all up front):
 
 - **references/dev.md** — day-to-day: worktrees, `up`/`down`/`ls`/`dash`/`proxy`/`logs`.
-- **references/databases.md** — per-worktree Postgres via `[accessories]` and `isola accessory …`.
+- **references/accessories.md** — per-worktree Postgres and Redis via `[accessories]` and `isola accessory …`.
 - **references/troubleshoot.md** — failed starts, ports, proxy/slug issues, database errors.
 
 This skill covers running an already-configured repo. First-time setup (writing

@@ -15,7 +15,8 @@ actually uses, don't assume a language, framework, or OS:
    per-worktree databases.
 4. Verify with `isola up` and `isola ls`.
 5. `isola hooks install` so new worktrees start themselves (`--shared` shares it
-   with the team).
+   with the team; `isola hooks status` shows state). For Orca users, `isola orca`
+   wires `isola up` into `orca.yaml` instead.
 
 ## References
 

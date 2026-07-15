@@ -8,6 +8,18 @@ isola ls             # what's running, on which ports, with which PIDs
 isola logs -f        # follow a worktree's service output
 ```
 
+## What `isola doctor` checks
+
+Each line is one check; a ✗ points at the fix:
+
+- **git installed**, **inside git repository** — prerequisites.
+- **config file** — `.isola.toml` parses (also shows the service count).
+- **proxy port N (svc) available** — each `proxy_port` is free (shows "served by
+  isola's proxy" when isola's own daemon is the one holding it).
+- **state file healthy** — flags a service recorded `running` whose PID is dead.
+- **worktree state consistent** — flags branches in state with no worktree on
+  disk (orphans) and tells you to run `isola down --prune`.
+
 ## A service won't start / "port already in use"
 
 Ports are hash-allocated per `branch:service` within each service's
@@ -34,6 +46,14 @@ If state looks stale after deleting worktrees, run `isola down --prune`.
   on `isola down --all`.
 - If two branches produce the same slug, `isola up` warns about the collision —
   rename one branch, since the proxy can't disambiguate them.
+- **Branded 502 vs 404.** A branded **502 "Service not answering"** means the
+  worktree is registered with an assigned port but nothing is listening there:
+  the service is ignoring `$PORT`, still starting, or crashed (check
+  `isola logs`). A **404** means an unknown project or an unrouted bare
+  `<slug>.localhost`.
+- **Edited `[proxy]` and nothing changed?** The shared daemon keeps the config it
+  started with. After changing `[proxy]` (`https`, ports), restart it with
+  `isola proxy stop && isola up`; `isola up` warns when the running proxy differs.
 
 ## HTTPS certificate warnings
 
@@ -48,7 +68,7 @@ isola trust           # install the local CA into the system trust store
 
 - **"collides with clone_from" / maintenance database**: the resolved db `name`
   equals `clone_from` or the server db. Change the `name` template or rename the
-  branch (see `references/databases.md`).
+  branch (see `references/accessories.md`).
 - **An accessory can't be brought up**: isola warns and starts services anyway,
   but without that accessory's injected var (e.g. `DATABASE_URL`), so your app
   falls back to its own config — watch for it connecting to the wrong database.
@@ -60,3 +80,6 @@ isola trust           # install the local CA into the system trust store
 - **Prune left databases behind**: if `isola down --prune` reports resources it
   couldn't drop, they're retained for retry — fix the server/config and prune
   again. Use `isola accessory ls` to see what's still recorded.
+- **"no free Redis logical database (all N in use)"**: every logical DB on the
+  server is claimed by a worktree. Raise the server's `databases` directive and
+  set a matching `databases = N` on the accessory.

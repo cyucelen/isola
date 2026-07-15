@@ -105,6 +105,7 @@ values can reference isola-provided sources with `${...}`:
 ```toml
 [services.web]
 command = "pnpm run dev"
+setup = "pnpm install"                     # runs before command on each up (deps, migrations)
 dir = "web"
 port_range = { min = 3100, max = 3199 }
 proxy_port = 3000
