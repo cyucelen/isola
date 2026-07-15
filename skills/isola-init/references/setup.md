@@ -45,20 +45,30 @@ proxy_port = 3000                          # the URL you hit: <branch>.<project>
   manager: pnpm/yarn/bun), taken from `package.json` scripts, `Procfile`,
   `Makefile`, or compose. Don't assume a stack, and don't hand-write a raw
   `npx vite …` when a script already exists.
-- Each service must **listen on the injected `$PORT`**. Many dev servers already
-  read `PORT` from the environment (Node's `process.env.PORT`, Rails, etc.) and
-  need no change. When one needs a flag, **extend the existing script** rather
-  than replacing it: `npm run dev -- --port $PORT` (everything after `--` is
-  passed through to the underlying tool). A service that ignores `$PORT` looks
-  `running` on a port nothing answers. Only hand-write a raw command when the
-  project has no script for it.
+- A service that serves HTTP must **listen on the injected `$PORT`**. Many dev
+  servers already read `PORT` from the environment (Node's `process.env.PORT`,
+  Rails, Django, etc.) and need no change. When one needs a flag, **extend the
+  existing script** rather than replacing it: `npm run dev -- --port $PORT`
+  (everything after `--` passes through to the underlying tool). **pnpm caveat:**
+  `pnpm run dev -- --port $PORT` does *not* work: pnpm inserts its own `--`, the
+  flag is swallowed, and the tool silently falls back to its default port (this
+  bit Vite in testing, [#9](https://github.com/cyucelen/isola/issues/9)). Under
+  pnpm, run the tool directly (`npx vite --port $PORT`) or make it read `$PORT`
+  from its own config (Vite: `server: { port: Number(process.env.PORT) }` in
+  `vite.config.ts`). A service that ignores `$PORT` looks `running` on a port
+  nothing answers, so always verify with a real request (step 6). Only hand-write
+  a raw command when the project has no script for it.
+- **A background process that doesn't listen** (a worker, queue consumer, cron
+  loop) omits **both** `port_range` and `proxy_port`. isola still runs and manages
+  it (env, logs, `setup`, reconcile), but allocates no `$PORT` and gives it no URL.
+  Don't invent a port for something that never serves HTTP.
 - If a fresh worktree needs a prep step before the app runs (a new working dir
   has no `node_modules`, un-run migrations, or ungenerated code), add
   `setup = "..."` to the service (e.g. `setup = "npm install"`). It runs before
   `command` on each `up`, in the service's `dir` with its env (so migrations see
   the per-worktree `DATABASE_URL`). Keep it idempotent; a failed setup blocks
   that service.
-- Give each service a unique `port_range` and `proxy_port`.
+- Give each listening service a unique `port_range` and `proxy_port`.
 - `project` defaults to the repo's directory name; set it at the top only to
   override that or resolve a clash with another repo of the same name.
 - **Gitignored files are copied into each new worktree** on `up`. `copy_files`
@@ -88,10 +98,16 @@ proxy (use for browser links); `services.<name>.direct_url` is a direct
 `http://127.0.0.1:<port>` (use for server-side calls between services: no DNS,
 works on every OS). isola delivers each service's env into its **process**
 and (unless disabled) into its **env file**, so tools that read `.env` /
-`.env.local` directly get the same isolated values. A service can set its own
-`env_file = "..."` (relative to `dir`); the default is `.env`. Only the explicit
-`${...}` form is expanded; a bare `$` is left literal, so a value like `p$ssw0rd`
-survives unchanged.
+`.env.local` directly get the same isolated values. Only the explicit `${...}`
+form is expanded; a bare `$` is left literal, so a value like `p$ssw0rd` survives
+unchanged.
+
+Control the env file with a top-level `[env_file]` block (all optional):
+`enabled` (default `true`; set `false` to stop writing env files), `create`
+(default `false`, so isola only updates a file that already exists; `true` creates
+it), and `path` (default `.env`, relative to each service's `dir`). A single
+service overrides the name with its own `env_file = "..."`, or opts out with
+`env_file = ""`.
 
 ## 5. Per-worktree databases (accessories)
 
@@ -151,11 +167,13 @@ The setup is verified when **all** of these hold:
 
 1. `isola doctor` passes every check (config file with the right service count,
    each `proxy_port` available, state healthy, worktrees consistent).
-2. `isola ls` shows every service `running` with a port and a
-   `<branch>.<project>.localhost:<proxy_port>` URL.
+2. `isola ls` shows every service `running`. Listening services have a port and a
+   `<branch>.<project>.localhost:<proxy_port>` URL; a background process shows
+   `running` with no port or URL, which is expected.
 3. Each service URL actually answers. Don't trust `running` alone: a service can
    report `running` on a port nothing listens on when its command ignores
-   `$PORT` (step 3). Confirm with a real request, e.g.:
+   `$PORT` (step 3). Confirm with a real request (skip this for a background
+   process, which serves nothing; check `isola logs` instead), e.g.:
 
    ```bash
    curl -sSf -o /dev/null -w '%{http_code}\n' http://<branch>.<project>.localhost:<proxy_port>

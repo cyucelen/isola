@@ -1,6 +1,6 @@
 ---
 name: isola
-description: Use isola to run and isolate per-git-worktree dev environments — stable per-branch ports, *.localhost reverse-proxy routing, and per-worktree databases. Use when a repo has a .isola.toml, when starting/stopping services across branches, reaching a branch's URL, isolating databases per worktree, or debugging isola.
+description: Use isola to run and isolate per-git-worktree dev environments — stable per-branch ports, *.localhost reverse-proxy routing, and per-worktree databases. Use when a repo has a .isola.toml, when starting/stopping services across branches, reaching a branch's URL, isolating databases per worktree, editing an existing .isola.toml (add/change a service, env, or proxy), or debugging isola.
 ---
 
 # isola
@@ -44,8 +44,12 @@ worktree, never overwriting.
 Read the file that matches the task (don't load them all up front):
 
 - **references/dev.md** — day-to-day: worktrees, `up`/`down`/`ls`/`dash`/`proxy`/`logs`.
+- **references/configuration.md** — editing an existing `.isola.toml` (add a
+  service, wire env, adjust the proxy) and the restart-to-apply rule.
 - **references/accessories.md** — per-worktree Postgres and Redis via `[accessories]` and `isola accessory …`.
 - **references/troubleshoot.md** — failed starts, ports, proxy/slug issues, database errors.
 
-This skill covers running an already-configured repo. First-time setup (writing
-`.isola.toml`) is the separate **isola-init** skill.
+This skill covers running an already-configured repo, including **changing its
+config** (see references/configuration.md; isola does not hot-reload, so restart
+after editing). First-time setup — discovering a repo's processes and writing
+`.isola.toml` from scratch — is the separate **isola-init** skill.
