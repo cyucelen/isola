@@ -259,8 +259,12 @@ Cover:
   With the git hook installed it starts on its own; otherwise `cd ../<name> &&
   isola up`. Remove it with `git worktree remove ../<name>` and isola tears down
   the leftover services and database.
-- **HTTPS, if wanted.** Set `https = true` under `[proxy]` in `.isola.toml`, then
-  `isola down && isola proxy stop && isola up`; trust the CA once with
-  `isola trust` (or accept the prompt on the first interactive `up`).
+- **HTTPS, if they want it.** Offer to turn it on. You can do the config yourself:
+  set `https = true` under `[proxy]` and restart (`isola down && isola proxy stop
+  && isola up`). Then guide the one manual step you can't do for them: trusting
+  the dev CA with `isola trust` (a single `sudo` prompt), or accepting the prompt
+  on the first interactive `up`. For Node/Bun services that call each other over
+  HTTPS, also add `NODE_EXTRA_CA_CERTS = "${proxy.ca_cert}"`. Don't run `sudo`
+  on their behalf; walk them through it.
 - **Day to day.** `isola ls` (status + URLs), `isola dash` (TUI), `isola down`
   (stop this worktree), `isola destroy` (stop + drop this worktree's database).
