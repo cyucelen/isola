@@ -55,7 +55,9 @@ command = "pnpm run dev"
 dir = "frontend"
 port_range = { min = 3100, max = 3199 }
 proxy_port = 3000
-env = { NODE_ENV = "development", API_URL = "${services.backend.url}" }
+
+[services.frontend.env]
+API_URL = "${services.backend.url}"
 ```
 
 Env values can reference isola-provided sources with `${...}`:

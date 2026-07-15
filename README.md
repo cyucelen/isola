@@ -108,15 +108,19 @@ command = "pnpm run dev"
 dir = "web"
 port_range = { min = 3100, max = 3199 }
 proxy_port = 3000
+
 # Injected into the process, and written to the service's env file:
-env = { API_URL = "${services.api.url}" }
+[services.web.env]
+API_URL = "${services.api.url}"
 
 [services.api]
 command = "go run ./cmd/server"
 dir = "api"
 port_range = { min = 8100, max = 8199 }
 proxy_port = 8000
-env = { DATABASE_URL = "${accessories.database.url}" }
+
+[services.api.env]
+DATABASE_URL = "${accessories.database.url}"
 
 # A per-worktree database, cloned from a seeded template:
 [accessories.database]

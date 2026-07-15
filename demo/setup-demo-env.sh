@@ -117,8 +117,10 @@ command = "python3 server.py"
 dir = "backend"
 port_range = { min = 8100, max = 8199 }
 proxy_port = 8000
+
 # This worktree's own database, cloned from the myapp_dev template:
-env = { DATABASE_URL = "${accessories.database.url}" }
+[services.backend.env]
+DATABASE_URL = "${accessories.database.url}"
 
 # Per-worktree database, cloned from the myapp_dev template.
 [accessories.database]

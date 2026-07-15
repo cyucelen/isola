@@ -383,17 +383,21 @@ command = "pnpm run dev"
 dir = "frontend"                        # relative to worktree root (empty = root)
 port_range = { min = 3100, max = 3199 } # port allocation range for this service
 proxy_port = 3000                        # proxy listens on this port
+
 # Per-service env: injected into the process and written to the env file.
 # Reference isola values with ${...}: services.<name>.url, services.<name>.direct_url,
 # services.<name>.port, accessories.<name>.url, proxy.ca_cert.
-env = { API_URL = "${services.backend.url}" }
+[services.frontend.env]
+API_URL = "${services.backend.url}"
 
 [services.backend]
 command = "go run ./cmd/server"
 dir = "backend"
 port_range = { min = 8100, max = 8199 }
 proxy_port = 8000
-# env = { DATABASE_URL = "${accessories.database.url}" }   # (uncomment the accessory below)
+# Uncomment together with the accessory below:
+# [services.backend.env]
+# DATABASE_URL = "${accessories.database.url}"
 
 # --- Per-worktree accessories (optional) ---
 # Isolate stateful dependencies per worktree. isola brings up each accessory
