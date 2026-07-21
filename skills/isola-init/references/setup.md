@@ -68,6 +68,16 @@ proxy_port = 3000                          # the URL you hit: <branch>.<project>
   `command` on each `up`, in the service's `dir` with its env (so migrations see
   the per-worktree `DATABASE_URL`). Keep it idempotent; a failed setup blocks
   that service.
+- For a prep step that belongs to the **whole worktree**, not one service, use a
+  **top-level** `setup = "..."` (a sibling of `copy_files`, above the
+  `[sections]`). It runs once per worktree on each `up`, at the repo root, after
+  accessories and before any service. Reach for it when a **root** install is what
+  wires things up, e.g. a monorepo whose root `pnpm install` runs a `prepare`
+  script that installs git hooks (husky), or generating a client shared by
+  several services. Same rules as per-service `setup`: idempotent, gets
+  `ISOLA_BRANCH`/`ISOLA_BRANCH_SLUG` and accessory URLs but no `$PORT`, and a
+  non-zero exit aborts the worktree's `up`. Prefer per-service `setup` when the
+  step is really about one service.
 - Give each listening service a unique `port_range` and `proxy_port`.
 - `project` defaults to the repo's directory name; set it at the top only to
   override that or resolve a clash with another repo of the same name.

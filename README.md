@@ -40,7 +40,7 @@ agents, run fully isolated, side by side, and clean up after themselves.
 - **Automatic ports**: each service gets a stable port, with no clashes between worktrees
 - **Subdomain proxy**: open each worktree in the browser at its own URL, over HTTP or HTTPS, with no hosts-file setup
 - **Environment injection**: each service is handed the port and URLs it needs to reach the others, so nothing is hardcoded
-- **Automatic setup**: each service can declare a setup step (install dependencies, run migrations, generate code) that isola runs before starting it, in the worktree's own environment, so a fresh worktree is ready with no manual prep
+- **Automatic setup**: each service can declare a setup step (install dependencies, run migrations, generate code) that isola runs before starting it, in the worktree's own environment, so a fresh worktree is ready with no manual prep. A top-level `setup` covers repo-root steps that belong to the whole worktree (a root install that wires up git hooks, generating a shared client), run once before any service
 - **AI-agent friendly**: machine-readable output plus an installable [agent skill](#quick-start), so coding agents can drive it
 - **TUI dashboard**: a terminal dashboard to start, stop, and monitor everything at once
 - **Zero dependencies**: just one binary to install, no Docker
@@ -107,6 +107,10 @@ Edit `.isola.toml` to match your project. Each service declares its own env;
 values can reference isola-provided sources with `${...}`:
 
 ```toml
+# Top-level, above any [section]: a repo-root step run once per worktree on up,
+# before any service (e.g. a root install that also sets up git hooks).
+setup = "pnpm install"
+
 [services.web]
 command = "pnpm run dev"
 setup = "pnpm install"                     # runs before command on each up (deps, migrations)

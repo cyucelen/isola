@@ -35,6 +35,13 @@ type Config struct {
 	// worktree into each worktree on `isola up` (git worktrees omit gitignored
 	// files). Unset means the default [".env"]; an explicit empty list disables.
 	CopyFiles []string `toml:"copy_files"`
+	// Setup is a repo-root provisioning command run once per worktree on each
+	// `isola up`, at the worktree root, after accessories are provisioned and
+	// before any service's setup or command. Unlike per-service `setup` it
+	// belongs to the worktree as a whole (e.g. a root `pnpm install` whose
+	// `prepare` script installs git hooks, or generating a shared client). Keep
+	// it idempotent; a non-zero exit aborts `up` before services start.
+	Setup string `toml:"setup,omitempty"`
 	// EnvFile controls whether isola also writes each service's resolved env
 	// into an env file the app reads (in addition to the process environment).
 	EnvFile EnvFileConfig `toml:"env_file"`
@@ -370,6 +377,9 @@ func Init(dir string) (string, error) {
 	}
 
 	content := `# isola config. Docs: https://github.com/cyucelen/isola
+
+# setup = "pnpm install"                # optional: repo-root step, runs once per
+                                        # worktree on up, before any service
 
 [services.frontend]
 command = "pnpm run dev"

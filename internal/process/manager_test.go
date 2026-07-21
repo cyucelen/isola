@@ -194,6 +194,70 @@ proxy_port = 3000
 	}
 }
 
+func TestRootSetupRunsAtRootBeforeServices(t *testing.T) {
+	// The service command only succeeds if the root setup ran first (it checks
+	// for the marker), and the marker is written with a relative path, so its
+	// presence at the worktree root also proves root setup ran there.
+	mgr, _ := managerWithConfig(t, `
+setup = "echo ran > root-setup-marker"
+
+[services.web]
+command = "test -f root-setup-marker && sleep 60"
+port_range = { min = 19100, max = 19199 }
+proxy_port = 3000
+`)
+	root := t.TempDir()
+	tree := &git.Worktree{Path: root, Branch: "main"}
+	defer mgr.StopServices(tree, "")
+
+	if err := mgr.RunRootSetup(tree); err != nil {
+		t.Fatalf("RunRootSetup: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "root-setup-marker")); err != nil {
+		t.Fatalf("root setup should run at the worktree root, marker missing: %v", err)
+	}
+
+	results := mgr.StartServices(tree, "")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Err != nil {
+		t.Errorf("web should start after root setup ran, got err: %v", results[0].Err)
+	}
+}
+
+func TestRootSetupNonZeroExitReturnsError(t *testing.T) {
+	// A non-zero root setup returns an error; `up` uses it to abort before
+	// starting any of the worktree's services.
+	mgr, _ := managerWithConfig(t, `
+setup = "exit 3"
+
+[services.web]
+command = "sleep 60"
+port_range = { min = 19100, max = 19199 }
+proxy_port = 3000
+`)
+	tree := &git.Worktree{Path: t.TempDir(), Branch: "main"}
+
+	if err := mgr.RunRootSetup(tree); err == nil {
+		t.Fatal("expected RunRootSetup to fail on a non-zero exit")
+	}
+}
+
+func TestRootSetupNoneConfiguredIsNoOp(t *testing.T) {
+	mgr, _ := managerWithConfig(t, `
+[services.web]
+command = "sleep 60"
+port_range = { min = 19100, max = 19199 }
+proxy_port = 3000
+`)
+	tree := &git.Worktree{Path: t.TempDir(), Branch: "main"}
+
+	if err := mgr.RunRootSetup(tree); err != nil {
+		t.Errorf("RunRootSetup with no top-level setup should be a no-op, got: %v", err)
+	}
+}
+
 func TestTargetServices(t *testing.T) {
 	cfg := &config.Config{
 		Services: map[string]config.ServiceConfig{

@@ -36,6 +36,27 @@ write a service's resolved env (accessory URLs, `${...}` refs, your `env`) into 
 file the app reads, so file-reading tools get this worktree's isolated values,
 see [`[env_file]`](#env_file).
 
+## `setup`
+
+A repo-root provisioning command run once per worktree on each `isola up`, at the
+worktree root. It's the whole-worktree counterpart to a service's
+[`setup`](#servicesname): use it for a step that isn't tied to one service, like a
+root `pnpm install` whose `prepare` script installs git hooks, generating a shared
+client, or a one-time `git config` / decryption fixup.
+
+```toml
+# Top-level key: must appear ABOVE any [section] header.
+setup = "pnpm install"
+```
+
+It runs **after** accessories are provisioned (so it can reference their env, e.g.
+`${accessories.database.url}`) and **before** any service's `setup` or `command`,
+so services can depend on its output. It runs at the worktree root with
+`ISOLA_BRANCH`, `ISOLA_BRANCH_SLUG`, accessory URLs, and `${proxy.ca_cert}`, but no
+`$PORT` or `ISOLA_SERVICE` (those are service-scoped). Keep it idempotent (it runs
+on every `up`); a non-zero exit aborts that worktree's `up` before its services
+start. Chain steps with `&&`.
+
 ## `[services.<name>]`
 
 Define one or more services. Each worktree will run all defined services.

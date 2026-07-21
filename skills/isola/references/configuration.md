@@ -97,7 +97,7 @@ services.api.command = "go run ./cmd/server -config auth"
 services.api.env = { DEBUG = "1" }
 ```
 
-## `project` / `copy_files` (top-level, above any `[section]`)
+## `project` / `copy_files` / `setup` (top-level, above any `[section]`)
 
 - `project` — the repo's machine-wide name (namespaces proxy URLs and Redis
   ownership). Defaults to the main worktree's slugified directory name; must be a
@@ -106,6 +106,14 @@ services.api.env = { DEBUG = "1" }
 - `copy_files` — globs copied from the main worktree into each new worktree on
   `up`, never overwriting (default `[".env"]`; `[]` disables). This is how a
   worktree gets files git leaves behind because they're gitignored.
+- `setup` — a repo-root command run once per worktree on each `up`, at the
+  worktree root, **after** accessories and **before** any service's `setup`/
+  `command`. The whole-worktree counterpart to a service's `setup`: use it for a
+  step not tied to one service (e.g. a root `pnpm install` whose `prepare` script
+  installs git hooks, generating a shared client). Gets `ISOLA_BRANCH`,
+  `ISOLA_BRANCH_SLUG`, accessory URLs, and `${proxy.ca_cert}` but no `$PORT`/
+  `ISOLA_SERVICE`. Keep it idempotent (runs every `up`); a non-zero exit aborts
+  that worktree's `up`. Chain with `&&`.
 
 The exhaustive human-facing reference is
 [docs/configuration.md](https://github.com/cyucelen/isola/blob/main/docs/configuration.md).

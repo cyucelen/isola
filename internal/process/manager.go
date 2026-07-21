@@ -277,6 +277,43 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 	return results
 }
 
+// RunRootSetup runs the repo-root setup command (top-level `setup` in config)
+// at the worktree root, before any service is started. It runs after accessories
+// are provisioned so the command can use their injected env (e.g.
+// ${accessories.database.url}); the accessory result is cached, so the following
+// StartServices reuses it without re-provisioning. A no-op when no root setup is
+// configured. A non-zero exit is returned as an error so the caller can abort
+// `up` before starting services. Unlike a service, root setup gets no $PORT or
+// ISOLA_SERVICE — it belongs to the worktree, not one service.
+func (m *Manager) RunRootSetup(tree *git.Worktree) error {
+	if m.cfg.Setup == "" {
+		return nil
+	}
+
+	acc := m.provisionAccessories(tree)
+
+	caCertPath := ""
+	if m.cfg.Proxy.HTTPS {
+		caCertPath = m.ensureCACert()
+	}
+
+	runner := NewRunner(RunnerConfig{
+		Branch:            tree.Branch,
+		BranchSlug:        tree.Slug(),
+		Project:           m.cfg.Project,
+		Dir:               tree.Path,
+		AccessoriesByName: acc,
+		ProxyScheme:       config.Scheme(m.cfg.Proxy.HTTPS),
+		CACertPath:        caCertPath,
+	})
+
+	logging.Info("→ setup (root): %s", m.cfg.Setup)
+	if err := runner.RunSetup(m.cfg.Setup); err != nil {
+		return fmt.Errorf("root setup failed: %w", err)
+	}
+	return nil
+}
+
 // ensureCACert makes sure isola's dev CA exists and returns its path, so
 // services can trust sibling HTTPS certs via NODE_EXTRA_CA_CERTS. It targets the
 // same cert dir the proxy daemon uses; EnsureCerts is idempotent, so generating

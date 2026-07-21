@@ -241,7 +241,11 @@ func (r *Runner) builtins() map[string]string {
 	m := map[string]string{
 		"ISOLA_BRANCH":      r.config.Branch,
 		"ISOLA_BRANCH_SLUG": r.config.BranchSlug,
-		"ISOLA_SERVICE":     r.config.ServiceName,
+	}
+	// The repo-root setup runs without a service; only a real service gets
+	// ISOLA_SERVICE (and, below, $PORT).
+	if r.config.ServiceName != "" {
+		m["ISOLA_SERVICE"] = r.config.ServiceName
 	}
 	// A background process (no port_range) gets no $PORT; only services that
 	// actually listen do.

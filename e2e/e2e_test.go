@@ -394,6 +394,62 @@ proxy_port = 4820
 	}
 }
 
+func TestRootSetupRunsAtRootBeforeServices(t *testing.T) {
+	e := newEnv(t)
+	// The service runs in a subdir, so a marker at the repo root can only come
+	// from the top-level setup, which runs at the worktree root.
+	repo := e.newRepo(`project = "e2erootsetup"
+
+setup = "echo ok > root-setup-ran.txt"
+
+[proxy]
+enabled = false
+
+[services.web]
+dir = "web"
+command = "sleep 120"
+port_range = { min = 4831, max = 4839 }
+proxy_port = 4830
+`)
+	if err := os.MkdirAll(filepath.Join(repo, "web"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	e.isola(repo, "up")
+	if !e.anyRunning(repo) {
+		t.Fatal("service should be running after up")
+	}
+	if _, err := os.Stat(filepath.Join(repo, "root-setup-ran.txt")); err != nil {
+		t.Errorf("root setup should have run at the worktree root (root-setup-ran.txt missing): %v", err)
+	}
+}
+
+func TestRootSetupFailureAbortsUp(t *testing.T) {
+	e := newEnv(t)
+	repo := e.newRepo(`project = "e2erootsetupfail"
+
+setup = "exit 3"
+
+[proxy]
+enabled = false
+
+[services.web]
+command = "sleep 120"
+port_range = { min = 4841, max = 4849 }
+proxy_port = 4840
+`)
+	out, err := e.cmd(repo, bin, "up").CombinedOutput()
+	if err == nil {
+		t.Errorf("up should exit non-zero when root setup fails; output:\n%s", out)
+	}
+	if !strings.Contains(string(out), "root setup failed") {
+		t.Errorf("up should report the root setup failure; output:\n%s", out)
+	}
+	if e.anyRunning(repo) {
+		t.Error("no service must start when root setup fails")
+	}
+}
+
 func TestBackgroundProcessRunsWithoutPortOrURL(t *testing.T) {
 	e := newEnv(t)
 	// web is proxied; worker has neither port_range nor proxy_port, so it is a

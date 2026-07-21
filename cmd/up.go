@@ -89,6 +89,15 @@ var upCmd = &cobra.Command{
 				logging.Info("Copied %s into %s", strings.Join(copied, ", "), tree.Branch)
 			}
 
+			// Run the repo-root setup (top-level `setup`) once for the worktree,
+			// before any service. A failure aborts this worktree's `up`: its
+			// services are the ones that depend on the root step's output.
+			if err := mgr.RunRootSetup(&tree); err != nil {
+				logging.Error("%s: %v", tree.Branch, err)
+				totalFailed++
+				continue
+			}
+
 			results := mgr.StartServices(&tree, upService)
 			for _, r := range results {
 				switch {
