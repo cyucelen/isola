@@ -64,6 +64,12 @@ isola trusts its CA on the first HTTPS `isola up` in a terminal. A non-interacti
 isola trust           # install the local CA into the system trust store
 ```
 
+Then **restart the browser**. Browsers read the system trust store at startup,
+so one that was already open when `isola trust` ran keeps warning until it is
+fully quit and reopened (quit the whole app, not just the tab or window). If a
+user reports the CA is trusted but the browser still warns, this is almost
+always the cause.
+
 ## Database / accessory errors
 
 - **"collides with clone_from" / maintenance database**: the resolved db `name`

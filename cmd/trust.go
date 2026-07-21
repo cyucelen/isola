@@ -24,7 +24,10 @@ password.
 
 isola normally does this for you on the first HTTPS 'isola up' in a terminal;
 run this command to (re)install trust manually. The CA is generated on the first
-HTTPS 'isola up' (enable HTTPS with [proxy] https = true).`,
+HTTPS 'isola up' (enable HTTPS with [proxy] https = true).
+
+Restart your browser afterwards: browsers read the system trust store at startup
+and keep warning about the CA until they are fully quit and reopened.`,
 	Annotations: map[string]string{"skipRepoDetection": "true"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		gdir, err := registry.GlobalDir()
@@ -44,6 +47,7 @@ HTTPS 'isola up' (enable HTTPS with [proxy] https = true).`,
 			return fmt.Errorf("installing CA certificate: %w", err)
 		}
 		fmt.Println("✓ CA certificate installed.")
+		fmt.Println("Restart your browser so it picks up the new CA; already-open browsers cache the trust store and keep warning until they are fully quit and reopened.")
 		return nil
 	},
 }

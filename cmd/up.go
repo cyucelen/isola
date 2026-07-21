@@ -219,7 +219,7 @@ func ensureHTTPSTrust(caPath string) {
 		logging.Warn("could not install the HTTPS CA (%v); continuing. Browsers will warn until you run `isola trust`.", err)
 		return
 	}
-	logging.Info("✓ HTTPS CA trusted")
+	logging.Info("✓ HTTPS CA trusted. Restart your browser so it picks up the new CA; already-open browsers keep warning until fully quit and reopened.")
 }
 
 // proxyConfigChanged reports whether the proxy-relevant config (HTTPS scheme or

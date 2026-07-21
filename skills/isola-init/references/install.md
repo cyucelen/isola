@@ -87,6 +87,7 @@ If `isola` is not found after `go install`, your Go bin directory is not on
   the first `isola up` in a terminal (one password prompt). Run `isola trust`
   yourself if you set it up non-interactively (see
   [`[proxy]`](https://github.com/cyucelen/isola/blob/main/docs/configuration.md#proxy)).
+  Restart your browser after trust is installed so it picks up the new CA.
 - **Shell completion**: bash, zsh, fish, and PowerShell are supported (see the
   [README](https://github.com/cyucelen/isola/blob/main/README.md#shell-completion)).
 

@@ -307,8 +307,11 @@ Cover:
   set `https = true` under `[proxy]` and restart (`isola down && isola proxy stop
   && isola up`). Then guide the one manual step you can't do for them: trusting
   the dev CA with `isola trust` (a single `sudo` prompt), or accepting the prompt
-  on the first interactive `up`. For Node/Bun services that call each other over
-  HTTPS, also add `NODE_EXTRA_CA_CERTS = "${proxy.ca_cert}"`. Don't run `sudo`
-  on their behalf; walk them through it.
+  on the first interactive `up`. Tell them to **restart the browser afterwards**:
+  browsers read the system trust store at startup, so one already open when the CA
+  was installed keeps warning until it is fully quit and reopened. For Node/Bun
+  services that call each other over HTTPS, also add
+  `NODE_EXTRA_CA_CERTS = "${proxy.ca_cert}"`. Don't run `sudo` on their behalf;
+  walk them through it.
 - **Day to day.** `isola ls` (status + URLs), `isola dash` (TUI), `isola down`
   (stop this worktree), `isola destroy` (stop + drop this worktree's database).
