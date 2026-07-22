@@ -620,6 +620,60 @@ MARKER = "api-marker"
 	}
 }
 
+func TestSingleServiceUpResolvesSiblingRefs(t *testing.T) {
+	e := newEnv(t)
+	// Restarting one service alone must still resolve its cross-service refs
+	// against the already-running sibling. web reaches api via the injected
+	// ${services.api.direct_url}; after `down --service web && up --service web`
+	// (api left running), that ref must not go empty.
+	body := fmt.Sprintf(`project = "e2esingle"
+
+[proxy]
+enabled = false
+
+[services.web]
+command = %q
+port_range = { min = 4991, max = 4993 }
+proxy_port = 4990
+
+[services.web.env]
+TARGET_URL = "${services.api.direct_url}"
+
+[services.api]
+command = %q
+port_range = { min = 4994, max = 4996 }
+proxy_port = 4991
+
+[services.api.env]
+MARKER = "api-marker"
+`, testServer, testServer)
+	repo := e.newRepo(body)
+
+	webPort := func() int {
+		for _, x := range e.ls(repo) {
+			if x.Service == "web" && x.Port > 0 {
+				return x.Port
+			}
+		}
+		t.Fatal("could not determine web's backend port from ls")
+		return 0
+	}
+
+	// Baseline: full up, web reaches api.
+	e.isola(repo, "up")
+	if status, got := e.waitReq(repo, "http", "127.0.0.1", webPort(), "/call", 200, "via:api-marker"); status != 200 || strings.TrimSpace(got) != "via:api-marker" {
+		t.Fatalf("baseline: web should reach api after full up: status=%d body=%q", status, got)
+	}
+
+	// Restart ONLY web, leaving api running. Before the fix, web's ${services.api.direct_url}
+	// resolved to empty here, so its /call fetch failed.
+	e.isola(repo, "down", "--service", "web")
+	e.isola(repo, "up", "--service", "web")
+	if status, got := e.waitReq(repo, "http", "127.0.0.1", webPort(), "/call", 200, "via:api-marker"); status != 200 || strings.TrimSpace(got) != "via:api-marker" {
+		t.Errorf("single-service up must resolve the sibling ref: web should still reach api: status=%d body=%q", status, got)
+	}
+}
+
 func TestAccessoryProvisionReconcileAndDestroy(t *testing.T) {
 	e := newEnv(t)
 	serverURL := startPostgres(t)

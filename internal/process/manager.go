@@ -101,19 +101,32 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 	var results []ServiceResult
 
 	services := m.targetServices(serviceFilter)
-
-	// First allocate all ports so cross-service env vars are available.
-	// Background processes (no port_range) get no port.
-	portMap := map[string]int{}
+	starting := make(map[string]bool, len(services))
 	for _, svcName := range services {
+		starting[svcName] = true
+	}
+
+	// Allocate ports for ALL configured services, not just the ones being
+	// started, so cross-service env vars resolve even under a single-service
+	// `up --service X`: its env may reference ${services.<sibling>.port} /
+	// .direct_url, which read this map. AssignPort reuses a sibling's persisted
+	// assignment (from an earlier `up`), so a still-running sibling contributes
+	// its real port. Background processes (no port_range) get no port.
+	portMap := map[string]int{}
+	for _, svcName := range m.targetServices("") {
 		if m.cfg.Services[svcName].PortRange.Max <= 0 {
 			continue // background process: nothing to allocate
 		}
 		p, err := m.registry.AssignPort(tree.Branch, svcName)
 		if err != nil {
-			results = append(results, ServiceResult{
-				Branch: tree.Branch, Service: svcName, Err: err,
-			})
+			// Only fail the run for a service we're actually starting. A
+			// sibling allocated solely for env context leaves its ref
+			// unresolved on failure, as it did before this map covered siblings.
+			if starting[svcName] {
+				results = append(results, ServiceResult{
+					Branch: tree.Branch, Service: svcName, Err: err,
+				})
+			}
 			continue
 		}
 		portMap[svcName] = p

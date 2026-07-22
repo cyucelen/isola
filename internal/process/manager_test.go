@@ -441,6 +441,73 @@ func TestManagerStartStopServices(t *testing.T) {
 	}
 }
 
+// A single-service `up --service X` must still resolve X's cross-service env
+// refs (${services.<sibling>.port|direct_url}) against the sibling's allocated
+// port, not leave them empty. Regression test for the scoping bug where the
+// interpolation context was built only from the in-flight (filtered) service.
+func TestStartServicesSingleServiceResolvesSiblingPort(t *testing.T) {
+	dir := t.TempDir()
+	store, err := state.NewFileStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		Services: map[string]config.ServiceConfig{
+			"api": {
+				Command:   "sleep 60",
+				PortRange: config.PortRange{Min: 19200, Max: 19299},
+				ProxyPort: 8000,
+			},
+			"dashboard": {
+				Command:   "sleep 60",
+				PortRange: config.PortRange{Min: 19300, Max: 19399},
+				ProxyPort: 3000,
+				Env: map[string]string{
+					"API_PORT":       "${services.api.port}",
+					"API_DIRECT_URL": "${services.api.direct_url}",
+				},
+			},
+		},
+		Worktrees: map[string]config.WTOverride{},
+	}
+
+	registry := port.NewRegistry(store, cfg)
+	mgr := NewManager(cfg, store, registry)
+	tree := &git.Worktree{Path: t.TempDir(), Branch: "main"}
+
+	// api's port is already allocated, as it would be for a running sibling,
+	// before we bring up dashboard on its own.
+	apiPort, err := registry.AssignPort("main", "api")
+	if err != nil {
+		t.Fatalf("AssignPort(api): %v", err)
+	}
+
+	// Start ONLY dashboard.
+	results := mgr.StartServices(tree, "dashboard")
+	if len(results) != 1 {
+		t.Fatalf("StartServices returned %d results, want 1", len(results))
+	}
+	if r := results[0]; r.Err != nil {
+		t.Fatalf("StartServices(dashboard): %v", r.Err)
+	}
+	t.Cleanup(func() { mgr.StopServices(tree, "dashboard") })
+
+	runner, ok := mgr.getRunner("main:dashboard")
+	if !ok {
+		t.Fatal("expected dashboard runner to be tracked")
+	}
+
+	env := runner.FileEnv()
+	wantPort := fmt.Sprintf("%d", apiPort)
+	if env["API_PORT"] != wantPort {
+		t.Errorf("API_PORT = %q, want %q (sibling port must resolve under --service)", env["API_PORT"], wantPort)
+	}
+	if !strings.Contains(env["API_DIRECT_URL"], wantPort) {
+		t.Errorf("API_DIRECT_URL = %q, want it to contain sibling port %q", env["API_DIRECT_URL"], wantPort)
+	}
+}
+
 func TestManagerStartBackgroundProcess(t *testing.T) {
 	dir := t.TempDir()
 	store, err := state.NewFileStore(dir)
