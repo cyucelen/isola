@@ -376,7 +376,8 @@ func Init(dir string) (string, error) {
 		return path, fmt.Errorf("%s already exists", FileName)
 	}
 
-	content := `# isola config. Docs: https://github.com/cyucelen/isola
+	content := `#:schema https://raw.githubusercontent.com/cyucelen/isola/main/isola.schema.tosd
+# isola config. Docs: https://github.com/cyucelen/isola
 
 # setup = "pnpm install"                # optional: repo-root step, runs once per
                                         # worktree on up, before any service

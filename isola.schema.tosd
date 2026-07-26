@@ -1,0 +1,104 @@
+[toml-schema]
+version = "1.0.0"
+
+[types]
+
+    [types.proxyType]
+    type = "table"
+        [types.proxyType.enabled]
+        type = "boolean"
+        [types.proxyType.https]
+        type = "boolean"
+        [types.proxyType.auto_trust]
+        type = "boolean"
+
+    [types.envFileType]
+    type = "table"
+        [types.envFileType.enabled]
+        type = "boolean"
+        [types.envFileType.create]
+        type = "boolean"
+        [types.envFileType.path]
+        type = "string"
+
+    [types.portRangeType]
+    type = "table"
+        [types.portRangeType.min]
+        type = "integer"
+        min = 1
+        [types.portRangeType.max]
+        type = "integer"
+        min = 1
+
+    [types.serviceEnvType]
+    type = "collection"
+    typeof = "string"
+
+    [types.serviceType]
+    type = "table"
+        [types.serviceType.command]
+        type = "string"
+        [types.serviceType.setup]
+        type = "string"
+        [types.serviceType.dir]
+        type = "string"
+        [types.serviceType.port_range]
+        typeof = "types.portRangeType"
+        [types.serviceType.proxy_port]
+        type = "integer"
+        min = 1
+        [types.serviceType.env]
+        typeof = "types.serviceEnvType"
+        [types.serviceType.env_file]
+        type = "string"
+
+    [types.worktreeServiceType]
+    type = "table"
+        [types.worktreeServiceType.command]
+        type = "string"
+        [types.worktreeServiceType.port]
+        type = "integer"
+        min = 1
+        [types.worktreeServiceType.env]
+        typeof = "types.serviceEnvType"
+
+    [types.worktreeType]
+    type = "table"
+        [types.worktreeType.services]
+        type = "collection"
+        typeof = "types.worktreeServiceType"
+
+    [types.accessoryType]
+    type = "table"
+        [types.accessoryType.kind]
+        type = "string"
+
+[elements]
+
+    [elements.project]
+    type = "string"
+
+    [elements.setup]
+    type = "string"
+
+    [elements.copy_files]
+    type = "array"
+    arraytype = "string"
+
+    [elements.proxy]
+    typeof = "types.proxyType"
+
+    [elements.env_file]
+    typeof = "types.envFileType"
+
+    [elements.services]
+    type = "collection"
+    typeof = "types.serviceType"
+
+    [elements.worktrees]
+    type = "collection"
+    typeof = "types.worktreeType"
+
+    [elements.accessories]
+    type = "collection"
+    typeof = "types.accessoryType"
