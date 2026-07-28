@@ -26,6 +26,7 @@ isola proxy stop               # stop the proxy (it is never auto-stopped)
 isola logs [worktree] [-f] [-n N] [-s svc]
 isola accessory ls|up|reset|drop [name]           # per-worktree databases (up = bring up / reuse)
 isola doctor                   # health checks
+isola update [--check]         # update isola to the latest release (self-update or via package manager)
 ```
 
 Service URLs (one machine-wide proxy): `http://<branch-slug>.<project>.localhost:<proxy_port>`.

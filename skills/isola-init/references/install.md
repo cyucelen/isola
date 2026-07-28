@@ -77,6 +77,29 @@ stage. The only install-time requirement it verifies is that **git** is present.
 If `isola` is not found after `go install`, your Go bin directory is not on
 `PATH` (see the Go section above).
 
+## Updating
+
+Once isola is installed, `isola update` keeps it current. It detects how isola
+was installed and does the right thing:
+
+```bash
+isola update           # update to the latest release
+isola update --check   # only report whether an update is available
+```
+
+- A **standalone** binary (dropped on `PATH`, built from source) or a
+  **`go install`** binary is updated in place: the matching release tarball is
+  downloaded and checksum-verified before replacing the binary (or `go install
+  ...@latest` is run). If the binary lives in a directory that needs root (e.g.
+  `/usr/local/bin`), re-run with `sudo`.
+- A **Homebrew**, **AUR**, or **deb/rpm** install is deferred to its package
+  manager: `isola update` runs `brew upgrade` for you, or prints the exact
+  command (AUR helper / `sudo dpkg -i` / `sudo rpm -U`) when it needs sudo or a
+  helper it can't assume.
+
+A development/source build has no release version to compare, so `isola update`
+tells you to update from your checkout (`git pull && make build`).
+
 ## After installing
 
 - **Configure your project**: `isola init`, then edit `.isola.toml` (see the

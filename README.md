@@ -294,6 +294,7 @@ case.
 | `isola hooks install`   | Install a git hook that runs `isola up` when a worktree is created (`--shared` to commit it) |
 | `isola orca`            | Add `isola up` to Orca's `orca.yaml` worktree setup hook                                     |
 | `isola doctor`          | Run diagnostic checks on config and ports                                                    |
+| `isola update`          | Update isola to the latest release (self-update, or via your package manager)                |
 | `isola version`         | Print version information                                                                    |
 
 
