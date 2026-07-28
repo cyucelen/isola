@@ -31,7 +31,7 @@ const (
 	// slug: two characters either side of the elision. Below it, Fit keeps only
 	// the head.
 	minSplit = 2 + len(elision) + 2
-	// MinFit is the smallest budget Fit can honour while keeping any of the
+	// MinFit is the smallest budget Fit can honor while keeping any of the
 	// identity readable: the hash, its separator, and two characters of slug.
 	// Callers with a smaller budget should report it rather than name a resource
 	// after a bare hash.
