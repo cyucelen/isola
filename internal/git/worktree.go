@@ -4,8 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
+
+	"github.com/cyucelen/isola/internal/slug"
 )
 
 // Worktree represents a single git worktree.
@@ -22,13 +23,11 @@ func (w *Worktree) Slug() string {
 	return BranchSlug(w.Branch)
 }
 
-var nonAlphaNum = regexp.MustCompile(`[^a-zA-Z0-9]+`)
-
-// BranchSlug converts a branch name to a URL-safe slug.
+// BranchSlug converts a branch name to a URL-safe slug. It is unbounded in
+// length: consumers that have a length budget (a Postgres identifier, a DNS
+// label) shorten it against their own limit with slug.Fit.
 func BranchSlug(branch string) string {
-	slug := nonAlphaNum.ReplaceAllString(branch, "-")
-	slug = strings.Trim(slug, "-")
-	return strings.ToLower(slug)
+	return slug.Make(branch)
 }
 
 // DetectSlugCollisions returns a map of slug -> branch names for any slugs that
@@ -39,13 +38,13 @@ func DetectSlugCollisions(trees []Worktree) map[string][]string {
 		if t.IsBare {
 			continue
 		}
-		slug := t.Slug()
-		slugBranches[slug] = append(slugBranches[slug], t.Branch)
+		s := t.Slug()
+		slugBranches[s] = append(slugBranches[s], t.Branch)
 	}
 	collisions := map[string][]string{}
-	for slug, branches := range slugBranches {
+	for s, branches := range slugBranches {
 		if len(branches) > 1 {
-			collisions[slug] = branches
+			collisions[s] = branches
 		}
 	}
 	return collisions

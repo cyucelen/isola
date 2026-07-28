@@ -14,6 +14,7 @@ import (
 	"github.com/cyucelen/isola/internal/cert"
 	"github.com/cyucelen/isola/internal/config"
 	"github.com/cyucelen/isola/internal/copyfiles"
+	"github.com/cyucelen/isola/internal/expand"
 	"github.com/cyucelen/isola/internal/git"
 	"github.com/cyucelen/isola/internal/logging"
 	"github.com/cyucelen/isola/internal/port"
@@ -152,9 +153,10 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 	slug := tree.Slug()
 
 	// Bring up per-worktree accessories (databases, ...) and collect the env vars
-	// they inject. A failed accessory only warns and is skipped; services still
-	// start (without that accessory's env), so a down dependency never blocks
-	// working on the rest of the worktree.
+	// they inject. A failed accessory only warns: services that don't reference it
+	// still start, so a down dependency never blocks working on the rest of the
+	// worktree. The ones that do reference it are failed below rather than started
+	// against an empty URL.
 	acc := m.provisionAccessories(tree)
 
 	for _, svcName := range services {
@@ -191,6 +193,19 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 		svc := m.cfg.Services[svcName]
 		command := m.cfg.CommandForBranch(svcName, tree.Branch)
 		env := m.cfg.EnvForBranch(svcName, tree.Branch)
+
+		// A service that reads an accessory's URL must not start when that
+		// accessory is unavailable: ${accessories.<name>.url} would expand to the
+		// empty string and the service would fail deep inside the app (or, worse,
+		// fall back to a shared database), which reads as a broken service rather
+		// than a broken accessory. Services that don't reference it still start.
+		if unmet := m.unmetAccessories(env, acc); len(unmet) > 0 {
+			results = append(results, ServiceResult{
+				Branch: tree.Branch, Service: svcName, Port: p,
+				Err: fmt.Errorf("not started: %s", strings.Join(unmet, "; ")),
+			})
+			continue
+		}
 
 		dir := tree.Path
 		if svc.Dir != "" {
@@ -421,6 +436,48 @@ func (m *Manager) provisionAccessories(tree *git.Worktree) map[string]string {
 		m.cacheAccessoryEnv(tree.Branch, env)
 	}
 	return env
+}
+
+// unmetAccessories returns one message per accessory a service's env references
+// through ${accessories.<name>.url} that provisioning did not supply, explaining
+// which of the two cases it is: configured but not brought up (the URL would be
+// empty), or referenced but never configured (a typo in the name).
+func (m *Manager) unmetAccessories(env map[string]string, provisioned map[string]string) []string {
+	var unmet []string
+	for _, name := range accessoryRefs(env) {
+		if _, ok := provisioned[name]; ok {
+			continue
+		}
+		if _, configured := m.cfg.Accessories[name]; configured {
+			unmet = append(unmet, fmt.Sprintf("accessory %q could not be brought up (see the warning above)", name))
+		} else {
+			unmet = append(unmet, fmt.Sprintf("accessory %q is referenced but not configured in [accessories]", name))
+		}
+	}
+	return unmet
+}
+
+// accessoryRefs returns the accessory names an env map references as
+// ${accessories.<name>.url}, sorted. It expands with a recording resolver so the
+// reference syntax is parsed exactly as the runner parses it.
+func accessoryRefs(env map[string]string) []string {
+	seen := map[string]bool{}
+	for _, v := range env {
+		expand.Braces(v, func(name string) string {
+			if rest, ok := strings.CutPrefix(name, "accessories."); ok {
+				if key, ok := strings.CutSuffix(rest, ".url"); ok && key != "" {
+					seen[key] = true
+				}
+			}
+			return ""
+		})
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // writeEnvFile upserts a service's resolved env into its env file per the

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cyucelen/isola/internal/accessory"
+	"github.com/cyucelen/isola/internal/git"
 )
 
 // fakeConn records the SQL it is asked to run and returns canned output for the
@@ -227,6 +228,78 @@ func TestResolveNameRejectsBadIdent(t *testing.T) {
 	}
 	if len(*calls) != 0 {
 		t.Error("must not touch server when name is invalid")
+	}
+}
+
+// TestProvisionFitsLongBranchNames covers the reported failure: a long branch
+// (an automated dependency bump) used to resolve to a name past Postgres'
+// identifier limit, so provisioning failed and every service that needed the
+// database came up without one.
+func TestProvisionFitsLongBranchNames(t *testing.T) {
+	const branch = "dependabot/npm_and_yarn/services/manager-dashboard/react-intersection-observer-10.1.0"
+	longWt := accessory.WorktreeInfo{Branch: branch, Slug: git.BranchSlug(branch)}
+
+	d, calls := newTestDriver(t, baseCfg, "")
+	got, err := d.Provision(context.Background(), longWt)
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	name := got.Handle["database"]
+	if len(name) > maxIdentBytes {
+		t.Errorf("database name %q is %d bytes, over the %d-byte limit", name, len(name), maxIdentBytes)
+	}
+	if !strings.Contains(strings.Join(*calls, "\n"), `CREATE DATABASE "`+name+`"`) {
+		t.Errorf("CREATE did not use the resolved name %q, calls:\n%s", name, strings.Join(*calls, "\n"))
+	}
+	// The name must still be traceable back to the worktree by eye.
+	if !strings.HasPrefix(name, "myapp_dependabot-") {
+		t.Errorf("database name %q should stay readable", name)
+	}
+}
+
+// TestProvisionKeepsSharedPrefixBranchesApart is the collision regression: two
+// branches whose slugs agree for the first 63 bytes (routine for automated
+// bumps, which differ only in the trailing version) must get separate databases.
+// Sharing one is worse than failing to start: each worktree would read the
+// other's rows and migrate the other's schema.
+func TestProvisionKeepsSharedPrefixBranchesApart(t *testing.T) {
+	const prefix = "dependabot/npm_and_yarn/services/manager-dashboard/axioss-1.18."
+	names := map[string]bool{}
+	for _, branch := range []string{prefix + "0", prefix + "1"} {
+		w := accessory.WorktreeInfo{Branch: branch, Slug: git.BranchSlug(branch)}
+		d, _ := newTestDriver(t, baseCfg, "")
+		got, err := d.Provision(context.Background(), w)
+		if err != nil {
+			t.Fatalf("Provision(%s): %v", branch, err)
+		}
+		names[got.Handle["database"]] = true
+	}
+	if len(names) != 2 {
+		t.Errorf("both branches share one database name: %v", names)
+	}
+}
+
+// TestProvisionReportsUnfittableName covers the loud-failure path: when the
+// configured template cannot fit the limit even with a shortened slug, the error
+// names the template and the budget instead of leaving a partly-started stack.
+func TestProvisionReportsUnfittableName(t *testing.T) {
+	c := baseCfg
+	c.Name = strings.Repeat("x", 60) + "_${ISOLA_BRANCH_SLUG}"
+	d, calls := newTestDriver(t, c, "")
+
+	const branch = "dependabot/npm_and_yarn/services/manager-dashboard/axios-1.18.0"
+	longWt := accessory.WorktreeInfo{Branch: branch, Slug: git.BranchSlug(branch)}
+	_, err := d.Provision(context.Background(), longWt)
+	if err == nil {
+		t.Fatal("Provision should fail when the name cannot fit the identifier limit")
+	}
+	for _, want := range []string{"database name", c.Name, "63"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %v should mention %q", err, want)
+		}
+	}
+	if len(*calls) != 0 {
+		t.Errorf("must not touch the server when the name cannot fit, got %v", *calls)
 	}
 }
 

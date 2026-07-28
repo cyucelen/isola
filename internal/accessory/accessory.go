@@ -16,6 +16,7 @@ import (
 	"github.com/cyucelen/isola/internal/config"
 	"github.com/cyucelen/isola/internal/expand"
 	"github.com/cyucelen/isola/internal/git"
+	"github.com/cyucelen/isola/internal/slug"
 )
 
 // URLWithPath returns base with its path replaced by "/"+seg, without mutating
@@ -50,12 +51,60 @@ func FromWorktree(wt *git.Worktree, project string) WorktreeInfo {
 // (ISOLA_BRANCH, ISOLA_BRANCH_SLUG), any extra vars, then the process
 // environment. It matches service env expansion byte-for-byte.
 func (wt WorktreeInfo) Expand(s string, extra map[string]string) string {
+	return wt.expand(s, extra, func() string { return wt.Slug })
+}
+
+// ExpandWithin expands s like Expand but guarantees the result fits maxBytes,
+// shortening the ${ISOLA_BRANCH_SLUG} substitution with slug.Fit when the full
+// expansion would overflow. Drivers use it wherever the thing being named has a
+// length limit (a Postgres identifier's 63 bytes, say); each passes its own
+// budget, since the limits differ per resource.
+//
+// A name that already fits is returned byte-identical to Expand, so worktrees
+// keep the resources they already have. When even a fitted slug cannot make the
+// name fit — the template's fixed text alone is too long, or there is no slug in
+// it to shorten — ExpandWithin reports that instead of returning an over-long
+// name: truncating to the limit is what would hand two worktrees the same
+// resource, and Postgres in particular truncates over-long identifiers itself
+// with only a NOTICE.
+func (wt WorktreeInfo) ExpandWithin(s string, maxBytes int, extra map[string]string) (string, error) {
+	full := wt.Expand(s, extra)
+	if len(full) <= maxBytes {
+		return full, nil
+	}
+
+	// Measure everything the template contributes apart from the slug, and how
+	// many times the slug appears, by expanding it to nothing.
+	slugRefs := 0
+	fixed := len(wt.expand(s, extra, func() string { slugRefs++; return "" }))
+	if slugRefs == 0 {
+		return "", fmt.Errorf("%q resolves to %d bytes, over the %d-byte limit, and has no ${ISOLA_BRANCH_SLUG} to shorten", s, len(full), maxBytes)
+	}
+	if fixed >= maxBytes {
+		return "", fmt.Errorf("%q needs %d bytes before ${ISOLA_BRANCH_SLUG} is substituted, over the %d-byte limit; shorten the template", s, fixed, maxBytes)
+	}
+	budget := (maxBytes - fixed) / slugRefs
+	if budget < slug.MinFit {
+		return "", fmt.Errorf("%q leaves only %d of the %d-byte limit for ${ISOLA_BRANCH_SLUG} (needs at least %d); shorten the template", s, budget, maxBytes, slug.MinFit)
+	}
+
+	fitted := wt.expand(s, extra, func() string { return slug.Fit(wt.Slug, budget) })
+	if len(fitted) > maxBytes {
+		return "", fmt.Errorf("%q resolves to %d bytes even with a shortened branch slug, over the %d-byte limit", s, len(fitted), maxBytes)
+	}
+	return fitted, nil
+}
+
+// expand is Expand with the ISOLA_BRANCH_SLUG substitution supplied by the
+// caller, so ExpandWithin can measure the rest of the template and count the
+// slug's occurrences without duplicating the resolution rules.
+func (wt WorktreeInfo) expand(s string, extra map[string]string, branchSlug func() string) string {
 	return expand.Braces(s, func(name string) string {
 		switch name {
 		case "ISOLA_BRANCH":
 			return wt.Branch
 		case "ISOLA_BRANCH_SLUG":
-			return wt.Slug
+			return branchSlug()
 		}
 		if v, ok := extra[name]; ok {
 			return v

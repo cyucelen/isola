@@ -9,6 +9,11 @@ failures and their fixes.
 - Check the log file at `.isola/logs/<branch-slug>.<service>.log` for error output.
 - Verify the `command` in `.isola.toml` runs correctly when executed manually.
 - Ensure the working `dir` exists relative to the worktree root.
+- `not started: accessory "<name>" could not be brought up` means the service
+  reads `${accessories.<name>.url}` and that accessory failed, so isola refused
+  to start it against an empty connection string. The warning just above names
+  the real cause (server unreachable, template busy, a `name` that cannot fit
+  the identifier limit). Services that don't use the accessory still start.
 
 ## Port conflict
 

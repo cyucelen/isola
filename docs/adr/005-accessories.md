@@ -9,6 +9,15 @@ Accepted.
 > string, which a service references explicitly as `${accessories.<name>.url}`
 > in its own `env`. See the [Configuration Reference](../configuration.md#accessoriesname).
 
+> **Update:** the safety rule "validate `name` is ≤ 63 bytes" below rejected long
+> branches outright, which left a worktree with no database and every dependent
+> service down. Names are now *fitted* to each resource's own budget
+> (`WorktreeInfo.ExpandWithin` + `internal/slug`): the middle of the branch slug is
+> elided and a hash of the untruncated slug appended, so branches sharing a long
+> prefix cannot collapse onto one database. The length check remains as a guard on
+> names isola did not derive. See the
+> [Configuration Reference](../configuration.md#accessoriesname).
+
 ## Context
 
 isola already gives each git worktree its own isolated *processes* (ADR-001),

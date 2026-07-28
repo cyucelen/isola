@@ -109,6 +109,16 @@ built-ins mirror the references above: `ISOLA_<SERVICE>_URL`,
 literal, so a value like `p$ssw0rd` survives unchanged. There is no global
 `[env]`; declare env per service.
 
+> [!NOTE]
+> `ISOLA_BRANCH_SLUG` is the worktree's routing identity, so it is passed through
+> at full length (automated branches like `dependabot/npm_and_yarn/...` reach 85
+> characters). It is not a safe base for identifiers with a length limit. If your
+> app derives one, such as a Postgres schema or a bucket prefix, use the bounded
+> name isola already computed: the accessory's `name`, reachable as
+> `${accessories.<name>.url}`. Rebuilding a name from the slug means applying your
+> own budget, the way isola does per resource (see
+> [Writing a new accessory](writing-an-accessory.md)).
+
 > [!IMPORTANT]
 > **Make your command bind the allocated `$PORT`.** isola injects the
 > allocated port as the `PORT` environment variable, but your service must
@@ -188,9 +198,25 @@ DATABASE_URL = "${accessories.database.url}"
 ```
 
 > [!NOTE]
-> The resolved `name` must be a legal Postgres identifier (≤ 63 bytes) and must
-> not equal `clone_from` or the `server_url` database, so isola never creates
-> or resets a worktree on top of the template.
+> The resolved `name` must be a legal Postgres identifier and must not equal
+> `clone_from` or the `server_url` database, so isola never creates or resets a
+> worktree on top of the template.
+
+Long branch names are shortened to fit. A `name` that resolves past Postgres'
+63-byte identifier limit (easy to reach: `dependabot/npm_and_yarn/...` branches
+are routinely 85 characters) keeps both ends of the branch slug, elides the
+middle, and appends a hash of the full slug:
+
+```
+myapp_dependabot-npm-and-yarn--section-observer-10-1-0-8l5fsz8a
+```
+
+The hash covers the untruncated slug, so two branches that agree for the first
+63 bytes and differ only in a trailing version still get separate databases;
+plain truncation would silently put them in one. Names that already fit are left
+exactly as they are, so existing databases keep their names. If the template's own
+text leaves no room for a slug, `isola up` reports the template and the budget
+instead of creating anything.
 
 **`kind = "redis"`** gives each worktree its own Redis logical database, allocated
 collision-free and flushed on reset/drop:

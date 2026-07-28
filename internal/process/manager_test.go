@@ -151,6 +151,107 @@ fail = true
 	}
 }
 
+// TestStartServicesFailsDependentsOfAFailedAccessory covers the diagnosis
+// problem behind the reported bug: a service that reads an accessory URL used to
+// start with that variable empty, so a naming or connection failure surfaced as
+// "the API is not reachable" instead of as a broken accessory. Dependents now
+// fail with the reason; independent services still start.
+func TestStartServicesFailsDependentsOfAFailedAccessory(t *testing.T) {
+	mgr, _ := managerWithConfig(t, `
+[services.api]
+command = "sleep 60"
+port_range = { min = 19100, max = 19199 }
+proxy_port = 3000
+env = { DATABASE_URL = "${accessories.db.url}" }
+
+[services.web]
+command = "sleep 60"
+port_range = { min = 19200, max = 19299 }
+proxy_port = 3001
+
+[accessories.db]
+kind = "faketest"
+fail = true
+`)
+	tree := &git.Worktree{Path: t.TempDir(), Branch: "main"}
+
+	results := mgr.StartServices(tree, "")
+	defer mgr.StopServices(tree, "")
+
+	byName := map[string]ServiceResult{}
+	for _, r := range results {
+		byName[r.Service] = r
+	}
+
+	api, ok := byName["api"]
+	if !ok {
+		t.Fatal("no result for api service")
+	}
+	if api.Err == nil {
+		t.Fatal("api reads ${accessories.db.url} and must not start without it")
+	}
+	for _, want := range []string{`"db"`, "not started"} {
+		if !strings.Contains(api.Err.Error(), want) {
+			t.Errorf("api error %v should mention %q", api.Err, want)
+		}
+	}
+	if api.PID > 0 {
+		t.Errorf("api should not be running, got PID %d", api.PID)
+	}
+	if _, running := mgr.getRunner("main:api"); running {
+		t.Error("no runner should exist for api")
+	}
+
+	web, ok := byName["web"]
+	if !ok {
+		t.Fatal("no result for web service")
+	}
+	if web.Err != nil {
+		t.Errorf("web does not use the accessory and should start: %v", web.Err)
+	}
+}
+
+func TestStartServicesReportsUnconfiguredAccessoryRef(t *testing.T) {
+	mgr, _ := managerWithConfig(t, `
+[services.api]
+command = "sleep 60"
+port_range = { min = 19100, max = 19199 }
+proxy_port = 3000
+env = { DATABASE_URL = "${accessories.typo.url}" }
+`)
+	tree := &git.Worktree{Path: t.TempDir(), Branch: "main"}
+
+	results := mgr.StartServices(tree, "")
+	defer mgr.StopServices(tree, "")
+
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].Err == nil || !strings.Contains(results[0].Err.Error(), "not configured") {
+		t.Errorf("err = %v, want it to report the accessory as not configured", results[0].Err)
+	}
+}
+
+func TestAccessoryRefs(t *testing.T) {
+	got := accessoryRefs(map[string]string{
+		"DATABASE_URL": "${accessories.db.url}",
+		"REDIS_URL":    "redis://${accessories.cache.url}/0",
+		"PLAIN":        "no refs here",
+		"OTHER":        "${accessories.db.url} again, plus ${ISOLA_BRANCH}",
+		"NOT_A_URL":    "${accessories.db.password}",
+		"NO_NAME":      "${accessories..url}",
+	})
+	want := []string{"cache", "db"}
+	if len(got) != len(want) {
+		t.Fatalf("accessoryRefs = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("accessoryRefs = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestStartServicesReportsImmediateExit(t *testing.T) {
 	mgr, store := managerWithConfig(t, `
 [services.web]

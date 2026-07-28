@@ -30,6 +30,14 @@ const connectTimeout = 10 * time.Second
 // it provisioned, so Drop can find it without re-reading config.
 const handleDatabase = "database"
 
+// maxIdentBytes is Postgres' identifier limit (NAMEDATALEN-1). It is the budget
+// the per-worktree database name is fitted to. Postgres does not reject a longer
+// name — it truncates it to this many bytes with a NOTICE — so two branches
+// sharing their first 63 bytes would silently land in one database, reading each
+// other's rows. isola shortens names itself, with a hash, rather than let that
+// happen.
+const maxIdentBytes = 63
+
 // pgConfig is the driver-owned config schema for [accessories.<name>].
 type pgConfig struct {
 	ServerURL string `toml:"server_url"` // existing server + maintenance db, for CREATE/DROP
@@ -101,12 +109,16 @@ func New(name string, dec accessory.Decoder) (accessory.Accessory, error) {
 func (d *driver) Name() string { return d.name }
 func (d *driver) Kind() string { return "postgres" }
 
-// resolveName expands ${VAR} in the configured name, validates it as a
-// Postgres identifier safe to interpolate (we always double-quote it in DDL),
-// and refuses names that collide with the clone source or maintenance database
-// — provisioning or resetting those would corrupt or destroy shared state.
+// resolveName expands ${VAR} in the configured name within Postgres' identifier
+// limit (long branch names would otherwise overrun it), validates the result as
+// an identifier safe to interpolate (we always double-quote it in DDL), and
+// refuses names that collide with the clone source or maintenance database —
+// provisioning or resetting those would corrupt or destroy shared state.
 func (d *driver) resolveName(wt accessory.WorktreeInfo) (string, error) {
-	name := wt.Expand(d.cfg.Name, nil)
+	name, err := wt.ExpandWithin(d.cfg.Name, maxIdentBytes, nil)
+	if err != nil {
+		return "", fmt.Errorf("resolving database name: %w", err)
+	}
 	if err := validIdent(name); err != nil {
 		return "", err
 	}
@@ -245,14 +257,17 @@ func (d *driver) guardDrop(dbName string) error {
 
 // validIdent checks a database name is safe to embed both as a double-quoted
 // identifier and inside a single-quoted string literal: non-empty, within
-// Postgres' 63-byte limit, and free of the quote/escape/control characters that
-// could break out of either quoting regardless of standard_conforming_strings.
+// Postgres' identifier limit, and free of the quote/escape/control characters
+// that could break out of either quoting regardless of
+// standard_conforming_strings. Names from resolveName are already fitted to the
+// limit; the check still guards clone_from and the names Drop reads back from
+// state, which isola did not derive.
 func validIdent(s string) error {
 	if s == "" {
 		return errors.New("database name is empty")
 	}
-	if len(s) > 63 {
-		return fmt.Errorf("database name %q exceeds Postgres' 63-byte identifier limit", s)
+	if len(s) > maxIdentBytes {
+		return fmt.Errorf("database name %q exceeds Postgres' %d-byte identifier limit", s, maxIdentBytes)
 	}
 	if strings.ContainsAny(s, "\"'\\\x00\n\r") {
 		return fmt.Errorf("database name %q contains an illegal character", s)

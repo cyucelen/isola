@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/cyucelen/isola/internal/accessory"
+	"github.com/cyucelen/isola/internal/git"
 	"github.com/jackc/pgx/v5"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -211,5 +212,82 @@ func TestPostgresIntegration(t *testing.T) {
 			t.Errorf("cloned db rows = %s, want 2", got)
 		}
 		_ = d.Drop(ctx, prov.Handle)
+	})
+
+	// A long branch (an automated dependency bump) resolves to a name past
+	// Postgres' identifier limit. Two such branches routinely share their first 63
+	// bytes and differ only in the trailing version, so the name must be
+	// shortened with a hash rather than truncated — and the database isola creates
+	// must be the one it later connects to.
+	t.Run("long branches get distinct, reachable databases", func(t *testing.T) {
+		const prefix = "dependabot/npm_and_yarn/services/manager-dashboard/axioss-1.18."
+		seen := map[string]bool{}
+		for _, branch := range []string{prefix + "0", prefix + "1"} {
+			d := newDriver(t, serverURL)
+			wt := accessory.WorktreeInfo{Branch: branch, Slug: git.BranchSlug(branch)}
+
+			prov, err := d.Provision(ctx, wt)
+			if err != nil {
+				t.Fatalf("Provision(%s): %v", branch, err)
+			}
+			name := prov.Handle["database"]
+			if len(name) > maxIdentBytes {
+				t.Errorf("database name %q is %d bytes, over the limit", name, len(name))
+			}
+			if seen[name] {
+				t.Fatalf("branch %s reused database %q", branch, name)
+			}
+			seen[name] = true
+
+			// The name Postgres stored must match the one isola recorded: if the
+			// server had truncated it, the injected URL would point elsewhere.
+			stored := mustRun(t, prov.URL, "select current_database()")
+			if stored != name {
+				t.Errorf("connected to %q, but provisioned %q", stored, name)
+			}
+			if got := mustRun(t, prov.URL, "select count(*) from widgets"); got != "2" {
+				t.Errorf("cloned db rows = %s, want 2", got)
+			}
+			t.Cleanup(func() { _ = d.Drop(ctx, prov.Handle) })
+		}
+	})
+
+	// Documents why isola shortens names itself rather than passing a long one
+	// through or truncating it: Postgres accepts an over-long identifier and
+	// silently truncates it to NAMEDATALEN-1, so two names that agree for 63 bytes
+	// become one database. Worse, the driver's own existence check could not tell:
+	// comparing datname (type "name") against a longer literal truncates the
+	// literal too, so the check reports a database isola never created. If a future
+	// Postgres rejects over-long identifiers instead, this test says so.
+	t.Run("postgres silently truncates over-long identifiers", func(t *testing.T) {
+		long := "trunc_" + strings.Repeat("x", maxIdentBytes) // 69 bytes
+		truncated := long[:maxIdentBytes]
+		mustRun(t, serverURL, `CREATE DATABASE "`+long+`"`)
+		t.Cleanup(func() { mustRun(t, serverURL, `DROP DATABASE IF EXISTS "`+truncated+`" WITH (FORCE)`) })
+
+		// Stored under the truncated name, not the one requested.
+		if got := mustRun(t, serverURL, "select length(datname::text) from pg_database where datname = '"+long+"'"); got != "63" {
+			t.Errorf("stored name length = %s, want 63 (truncation assumption no longer holds)", got)
+		}
+		if got := mustRun(t, serverURL, "select count(*) from pg_database where datname::text = '"+long+"'"); got != "0" {
+			t.Errorf("over-long name stored verbatim (count %s)", got)
+		}
+
+		// And the driver's existence check cannot distinguish the two, which is why
+		// resolveName must fit the name before any SQL is issued.
+		d := newDriver(t, serverURL)
+		c, err := d.open(ctx, serverURL)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		defer c.close(ctx)
+		neverCreated := truncated + "-never-created"
+		exists, err := d.databaseExists(ctx, c, neverCreated)
+		if err != nil {
+			t.Fatalf("databaseExists: %v", err)
+		}
+		if !exists {
+			t.Skip("this Postgres distinguishes over-long names; the truncation hazard no longer applies")
+		}
 	})
 }
