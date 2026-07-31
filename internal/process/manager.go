@@ -150,7 +150,7 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 		caCertPath = m.ensureCACert()
 	}
 
-	slug := tree.Slug()
+	hostLabel := tree.HostLabel()
 
 	// Bring up per-worktree accessories (databases, ...) and collect the env vars
 	// they inject. A failed accessory only warns: services that don't reference it
@@ -236,7 +236,7 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 		runner := NewRunner(RunnerConfig{
 			ServiceName:          svcName,
 			Branch:               tree.Branch,
-			BranchSlug:           slug,
+			HostLabel:            hostLabel,
 			Project:              m.cfg.Project,
 			Command:              command,
 			Dir:                  dir,
@@ -327,7 +327,7 @@ func (m *Manager) RunRootSetup(tree *git.Worktree) error {
 
 	runner := NewRunner(RunnerConfig{
 		Branch:            tree.Branch,
-		BranchSlug:        tree.Slug(),
+		HostLabel:         tree.HostLabel(),
 		Project:           m.cfg.Project,
 		Dir:               tree.Path,
 		AccessoriesByName: acc,

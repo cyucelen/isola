@@ -83,6 +83,20 @@ union of all Projects' proxy ports. Distinct from a per-repo proxy.
 _Avoid_: server, service, gateway
 
 **Qualified URL**:
-A project-qualified address `<branch-slug>.<project>.localhost:<port>`. Always
-required; the bare `<branch-slug>.localhost` form is not routed.
+A project-qualified address `<host-label>.<project>.localhost:<port>`. Always
+required; the bare `<host-label>.localhost` form is not routed.
 _Avoid_: subdomain, vanity URL
+
+**Host label**:
+The DNS label a Worktree is addressed by, and the one identity everything
+user-facing agrees on: the printed and injected URLs, the Host the proxy matches,
+the certificate's SAN, and the log file name. It is the branch slug fitted to the
+63-byte DNS label limit (`git.HostLabel`), which a long branch exceeds.
+_Avoid_: slug (bare), subdomain, hostname (that's the whole `a.b.localhost`)
+
+**Branch slug**:
+The lowercased, hyphenated form of a branch name, with no length bound
+(`git.BranchSlug`). It is the *input* a derived name is fitted from, not a name
+itself: each consumer applies its own budget (63 bytes for a Host label, 63 minus
+the template for a Postgres identifier).
+_Avoid_: using it directly anywhere a length limit applies

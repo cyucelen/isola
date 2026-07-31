@@ -16,12 +16,13 @@ type StatusUpdateMsg struct {
 
 // ServiceRow represents a single row in the dashboard table.
 type ServiceRow struct {
-	Branch  string
-	Slug    string
-	Service string
-	Port    int
-	Status  string // state.StatusRunning or state.StatusStopped
-	PID     int
+	Branch string
+	// HostLabel is the worktree's DNS label, for its proxy URL and log path.
+	HostLabel string
+	Service   string
+	Port      int
+	Status    string // state.StatusRunning or state.StatusStopped
+	PID       int
 }
 
 // ActionResultMsg carries the result of a user action (start/stop/restart).

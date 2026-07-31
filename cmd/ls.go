@@ -117,7 +117,7 @@ func buildLsEntries(trees []git.Worktree, serviceNames []string, st *state.State
 			branch = "(detached)"
 		}
 
-		slug := tree.Slug()
+		hostLabel := tree.HostLabel()
 
 		for _, svcName := range serviceNames {
 			e := lsEntry{
@@ -140,11 +140,13 @@ func buildLsEntries(trees []git.Worktree, serviceNames []string, st *state.State
 				}
 			}
 
-			// Build URLs (project-qualified for the shared proxy). A background
-			// process has no proxy_port, so it has no URL.
+			// Build URLs (project-qualified for the shared proxy) through the same
+			// constructor the proxy and env injection use, so what `ls` prints is
+			// exactly what routes. A background process has no proxy_port, so it
+			// has no URL.
 			if proxyRunning && c != nil {
 				if svc, ok := c.Services[svcName]; ok && svc.ProxyPort > 0 {
-					e.URL = fmt.Sprintf("%s://%s.%s.localhost:%d", scheme, slug, c.Project, svc.ProxyPort)
+					e.URL = browser.BuildURL(scheme, hostLabel, c.Project, svc.ProxyPort)
 				}
 			}
 			if e.Port > 0 {

@@ -51,9 +51,9 @@ func TestRenderTableEmpty(t *testing.T) {
 
 func TestRenderTableWithRows(t *testing.T) {
 	rows := []ServiceRow{
-		{Branch: "main", Slug: "main", Service: "frontend", Port: 3100, Status: state.StatusRunning, PID: 12345},
-		{Branch: "main", Slug: "main", Service: "backend", Port: 8100, Status: state.StatusStopped, PID: 0},
-		{Branch: "feature/auth", Slug: "feature-auth", Service: "frontend", Port: 3117, Status: state.StatusRunning, PID: 12346},
+		{Branch: "main", HostLabel: "main", Service: "frontend", Port: 3100, Status: state.StatusRunning, PID: 12345},
+		{Branch: "main", HostLabel: "main", Service: "backend", Port: 8100, Status: state.StatusStopped, PID: 0},
+		{Branch: "feature/auth", HostLabel: "feature-auth", Service: "frontend", Port: 3117, Status: state.StatusRunning, PID: 12346},
 	}
 
 	result := renderTable(rows, 0, 100)

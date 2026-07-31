@@ -4,6 +4,13 @@
 
 Accepted
 
+> **Update:** the branch slug used as the host's first label is now fitted to the
+> 63-byte DNS label limit (`git.HostLabel`); a long branch previously produced a
+> label no resolver would look up and no certificate could cover, so the worktree
+> ran with no reachable URL. The label is derived once and shared by the printed
+> and injected URLs, the Host the proxy matches, and the minted certificate. See
+> the [Configuration Reference](../configuration.md#worktree-urls).
+
 ## Context
 
 Users want to access different branches via distinct URLs without port numbers:

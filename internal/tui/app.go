@@ -237,9 +237,9 @@ func (m *Model) refreshStatus() tea.Msg {
 		}
 		for _, svcName := range serviceNames {
 			row := ServiceRow{
-				Branch:  tree.Branch,
-				Slug:    tree.Slug(),
-				Service: svcName,
+				Branch:    tree.Branch,
+				HostLabel: tree.HostLabel(),
+				Service:   svcName,
 			}
 
 			ss := state.GetServiceState(st, tree.Branch, svcName)
@@ -346,7 +346,7 @@ func (m *Model) openSelected() tea.Msg {
 	}
 
 	// The scheme follows this project's proxy config.
-	url := browser.BuildURL(config.Scheme(m.cfg.Proxy.HTTPS), row.Slug, m.cfg.Project, svc.ProxyPort)
+	url := browser.BuildURL(config.Scheme(m.cfg.Proxy.HTTPS), row.HostLabel, m.cfg.Project, svc.ProxyPort)
 	if err := browser.Open(url); err != nil {
 		return ActionResultMsg{Message: fmt.Sprintf("Error opening browser: %v", err), IsError: true}
 	}
@@ -385,7 +385,7 @@ func (m *Model) viewLogs() tea.Msg {
 		return ActionResultMsg{Message: "No service selected"}
 	}
 
-	logPath := process.LogPath(m.store.Dir(), row.Slug, row.Service)
+	logPath := process.LogPath(m.store.Dir(), row.HostLabel, row.Service)
 
 	if _, err := os.Stat(logPath); os.IsNotExist(err) {
 		return ActionResultMsg{Message: "No log file found"}

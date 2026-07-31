@@ -17,34 +17,54 @@ type Worktree struct {
 	IsBare bool
 }
 
-// Slug returns a URL-safe slug for the branch name.
-// e.g., "feature/auth" -> "feature-auth"
-func (w *Worktree) Slug() string {
-	return BranchSlug(w.Branch)
+// HostLabel returns the worktree's routing identity: the DNS label that carries
+// it in "<label>.<project>.localhost", in its log file names, and in
+// ISOLA_BRANCH_SLUG. See [HostLabel].
+func (w *Worktree) HostLabel() string {
+	return HostLabel(w.Branch)
 }
 
-// BranchSlug converts a branch name to a URL-safe slug. It is unbounded in
-// length: consumers that have a length budget (a Postgres identifier, a DNS
-// label) shorten it against their own limit with slug.Fit.
+// BranchSlug converts a branch name to a URL-safe slug, with no length bound.
+// It is the *input* to derived names, not a name itself: use it where the
+// consumer applies its own budget (an accessory's resource name, via
+// accessory.WorktreeInfo.ExpandWithin). For anything that appears in a hostname,
+// use [HostLabel].
 func BranchSlug(branch string) string {
 	return slug.Make(branch)
 }
 
-// DetectSlugCollisions returns a map of slug -> branch names for any slugs that
-// map to more than one branch. An empty map means no collisions.
-func DetectSlugCollisions(trees []Worktree) map[string][]string {
-	slugBranches := map[string][]string{}
+// HostLabel converts a branch name to the DNS label isola routes it on, fitted
+// to the 63-byte limit a label may not exceed. Long branch names (the automated
+// "dependabot/npm_and_yarn/services/<svc>/<pkg>-<version>" shape passes 63 on its
+// own) are shortened with a hash of the full slug, so distinct branches stay
+// distinct. Labels that already fit are returned unchanged.
+//
+// Everything that must agree on the host derives it here: the URL isola prints
+// and injects, the Host the proxy matches, and the SNI name the dev cert is
+// minted for. An over-long label breaks all three at once — a resolver will not
+// look it up, and a browser will not match a certificate SAN containing it — so
+// the services run but no browser can reach them.
+func HostLabel(branch string) string {
+	return slug.Fit(BranchSlug(branch), slug.DNSLabelMax)
+}
+
+// DetectHostLabelCollisions returns a map of host label -> branch names for any
+// label shared by more than one branch. An empty map means no collisions. Two
+// branches on one label make proxy routing ambiguous, since the label is all the
+// Host header carries.
+func DetectHostLabelCollisions(trees []Worktree) map[string][]string {
+	byLabel := map[string][]string{}
 	for _, t := range trees {
 		if t.IsBare {
 			continue
 		}
-		s := t.Slug()
-		slugBranches[s] = append(slugBranches[s], t.Branch)
+		l := t.HostLabel()
+		byLabel[l] = append(byLabel[l], t.Branch)
 	}
 	collisions := map[string][]string{}
-	for s, branches := range slugBranches {
+	for l, branches := range byLabel {
 		if len(branches) > 1 {
-			collisions[s] = branches
+			collisions[l] = branches
 		}
 	}
 	return collisions

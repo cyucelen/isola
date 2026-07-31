@@ -50,7 +50,7 @@ func writeLog(t *testing.T, repoDir, service, content string) {
 	if err := os.MkdirAll(filepath.Join(stateDir, "logs"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	path := process.LogPath(stateDir, tree.Slug(), service)
+	path := process.LogPath(stateDir, tree.HostLabel(), service)
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}

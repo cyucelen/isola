@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -62,5 +63,28 @@ func TestBuildURL_VariousInputs(t *testing.T) {
 				t.Errorf("BuildURL(%q, %q, %q, %d) = %q, want %q", tt.scheme, tt.slug, tt.project, tt.proxyPort, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestBuildURLFitsTheHostLabel guards the URL constructor itself: an unfitted
+// slug reaching it (from a caller that forgot git.HostLabel) must still produce a
+// URL a browser can resolve, and must agree with what the proxy matches on.
+func TestBuildURLFitsTheHostLabel(t *testing.T) {
+	raw := "dependabot-npm-and-yarn-services-manager-dashboard-ai-sdk-react-4-0-40" // 70 bytes
+	got := BuildURL("https", raw, "mono", 3000)
+
+	host, _, ok := strings.Cut(strings.TrimPrefix(got, "https://"), ":")
+	if !ok {
+		t.Fatalf("BuildURL returned %q, expected a host:port", got)
+	}
+	for _, label := range strings.Split(host, ".") {
+		if len(label) > 63 {
+			t.Errorf("BuildURL(%q, ...) = %q, whose label %q is %d bytes; a browser will not resolve it",
+				raw, got, label, len(label))
+		}
+	}
+	// Fitting is idempotent, so a label already within the limit is untouched.
+	if again := BuildURL("https", strings.Split(host, ".")[0], "mono", 3000); again != got {
+		t.Errorf("BuildURL is not idempotent: %q then %q", got, again)
 	}
 }

@@ -43,8 +43,13 @@ type WorktreeInfo struct {
 }
 
 // FromWorktree builds a WorktreeInfo from a git worktree and its project name.
+// The Slug is the unbounded branch slug, not the worktree's host label: a
+// resource name is fitted to its own budget by ExpandWithin, and hashing the
+// full slug there keeps names stable and maximally distinguishing. Fitting the
+// input twice (to 63 for a hostname, then again for the name) would both lose
+// readable characters and rename every resource provisioned before this.
 func FromWorktree(wt *git.Worktree, project string) WorktreeInfo {
-	return WorktreeInfo{Project: project, Branch: wt.Branch, Slug: wt.Slug()}
+	return WorktreeInfo{Project: project, Branch: wt.Branch, Slug: git.BranchSlug(wt.Branch)}
 }
 
 // Expand interpolates ${VAR} references in s using the worktree's identity

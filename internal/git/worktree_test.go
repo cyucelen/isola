@@ -36,29 +36,29 @@ func TestBranchSlug(t *testing.T) {
 	}
 }
 
-func TestWorktreeSlug(t *testing.T) {
+func TestWorktreeHostLabel(t *testing.T) {
 	wt := &Worktree{Branch: "feature/auth"}
-	got := wt.Slug()
+	got := wt.HostLabel()
 	want := "feature-auth"
 	if got != want {
-		t.Errorf("Worktree.Slug() = %q, want %q", got, want)
+		t.Errorf("Worktree.HostLabel() = %q, want %q", got, want)
 	}
 
-	// Slug should match BranchSlug
+	// A label within the limit is the branch slug unchanged.
 	if got != BranchSlug(wt.Branch) {
-		t.Errorf("Worktree.Slug() != BranchSlug(branch)")
+		t.Errorf("Worktree.HostLabel() != BranchSlug(branch)")
 	}
 }
 
-func TestDetectSlugCollisions(t *testing.T) {
+func TestDetectHostLabelCollisions(t *testing.T) {
 	t.Run("no collisions", func(t *testing.T) {
 		trees := []Worktree{
 			{Path: "/a", Branch: "main"},
 			{Path: "/b", Branch: "feature/auth"},
 		}
-		got := DetectSlugCollisions(trees)
+		got := DetectHostLabelCollisions(trees)
 		if len(got) != 0 {
-			t.Errorf("DetectSlugCollisions() = %v, want empty", got)
+			t.Errorf("DetectHostLabelCollisions() = %v, want empty", got)
 		}
 	})
 
@@ -67,9 +67,9 @@ func TestDetectSlugCollisions(t *testing.T) {
 			{Path: "/a", Branch: "feature/auth"},
 			{Path: "/b", Branch: "feature-auth"},
 		}
-		got := DetectSlugCollisions(trees)
+		got := DetectHostLabelCollisions(trees)
 		if len(got) != 1 {
-			t.Fatalf("DetectSlugCollisions() returned %d collisions, want 1", len(got))
+			t.Fatalf("DetectHostLabelCollisions() returned %d collisions, want 1", len(got))
 		}
 		branches, ok := got["feature-auth"]
 		if !ok {
@@ -85,16 +85,16 @@ func TestDetectSlugCollisions(t *testing.T) {
 			{Path: "/a", Branch: "main", IsBare: true},
 			{Path: "/b", Branch: "main"},
 		}
-		got := DetectSlugCollisions(trees)
+		got := DetectHostLabelCollisions(trees)
 		if len(got) != 0 {
-			t.Errorf("DetectSlugCollisions() = %v, want empty (bare should be skipped)", got)
+			t.Errorf("DetectHostLabelCollisions() = %v, want empty (bare should be skipped)", got)
 		}
 	})
 
 	t.Run("empty input", func(t *testing.T) {
-		got := DetectSlugCollisions(nil)
+		got := DetectHostLabelCollisions(nil)
 		if len(got) != 0 {
-			t.Errorf("DetectSlugCollisions(nil) = %v, want empty", got)
+			t.Errorf("DetectHostLabelCollisions(nil) = %v, want empty", got)
 		}
 	})
 }
@@ -492,5 +492,60 @@ branch refs/heads/release/v2.0
 				}
 			}
 		})
+	}
+}
+
+// longBranch is the shape that motivated fitting the host label: an automated
+// dependency branch whose slug is 70 bytes, over the 63-byte DNS label limit.
+const longBranch = "dependabot/npm_and_yarn/services/manager-dashboard/ai-sdk/react-4.0.40"
+
+func TestHostLabelFitsTheDNSLabelLimit(t *testing.T) {
+	raw := BranchSlug(longBranch)
+	if len(raw) <= 63 {
+		t.Fatalf("fixture slug is %d bytes; the test needs one over 63", len(raw))
+	}
+
+	label := HostLabel(longBranch)
+	if len(label) > 63 {
+		t.Errorf("HostLabel(%q) = %q (%d bytes), over the 63-byte DNS label limit", longBranch, label, len(label))
+	}
+	// Still recognizable as this worktree in a URL bar.
+	if !strings.HasPrefix(label, "dependabot-") {
+		t.Errorf("HostLabel = %q, want a readable prefix", label)
+	}
+	// Legal as a DNS label: lowercase alphanumerics and hyphens, no edge hyphen.
+	if label[0] == '-' || label[len(label)-1] == '-' {
+		t.Errorf("HostLabel = %q, must not start or end with a hyphen", label)
+	}
+	legal := func(c byte) bool {
+		return c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-'
+	}
+	for i := 0; i < len(label); i++ {
+		if !legal(label[i]) {
+			t.Errorf("HostLabel = %q contains %q, not legal in a DNS label", label, label[i])
+		}
+	}
+}
+
+func TestHostLabelLeavesShortBranchesAlone(t *testing.T) {
+	// Every worktree that works today keeps the exact URL it has.
+	for _, branch := range []string{"main", "feature/auth", "release.1.0"} {
+		if got, want := HostLabel(branch), BranchSlug(branch); got != want {
+			t.Errorf("HostLabel(%q) = %q, want %q unchanged", branch, got, want)
+		}
+	}
+}
+
+// TestHostLabelKeepsLongBranchesDistinct is the collision regression: truncating
+// to 63 would map two automated bumps of the same package onto one label, and the
+// proxy would route both worktrees to whichever it found first.
+func TestHostLabelKeepsLongBranchesDistinct(t *testing.T) {
+	const prefix = "dependabot/npm_and_yarn/services/manager-dashboard/ai-sdk/react-4.0.4"
+	a, b := HostLabel(prefix+"0"), HostLabel(prefix+"1")
+	if BranchSlug(prefix + "0")[:63] != BranchSlug(prefix + "1")[:63] {
+		t.Fatal("fixtures must agree for their first 63 bytes")
+	}
+	if a == b {
+		t.Errorf("two branches share the host label %q", a)
 	}
 }

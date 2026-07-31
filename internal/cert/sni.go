@@ -106,7 +106,7 @@ func mintLeaf(serverName string, caCert *x509.Certificate, caKey *ecdsa.PrivateK
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			CommonName:   serverName,
+			CommonName:   commonNameFor(serverName),
 			Organization: []string{"Isola"},
 		},
 		DNSNames:    dnsNames,
@@ -132,6 +132,26 @@ func mintLeaf(serverName string, caCert *x509.Certificate, caKey *ecdsa.PrivateK
 		PrivateKey:  leafKey,
 		Leaf:        leaf,
 	}, nil
+}
+
+// maxCommonName is the X.509 upper bound on a CommonName (RFC 5280
+// ub-common-name, 64 bytes). A worktree host reaches past it easily:
+// "<63-byte label>.<project>.localhost" is already 78.
+const maxCommonName = 64
+
+// commonNameFor returns a CommonName for serverName that stays within the X.509
+// bound. Verification is driven entirely by the SAN, which always carries the
+// full host; the CN is a label for humans reading the certificate, so when the
+// host does not fit, its first component (the worktree, the part that identifies
+// which environment this is) is used instead.
+func commonNameFor(serverName string) string {
+	if len(serverName) <= maxCommonName {
+		return serverName
+	}
+	if label, _, ok := strings.Cut(serverName, "."); ok && len(label) <= maxCommonName {
+		return label
+	}
+	return serverName[:maxCommonName]
 }
 
 // loadCA loads and parses the CA certificate and private key from disk.

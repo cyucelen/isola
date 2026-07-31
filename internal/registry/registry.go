@@ -33,6 +33,11 @@ type Daemon struct {
 	PID     int  `json:"pid"`
 	Version int  `json:"version"`
 	Running bool `json:"running"`
+	// Build is the isola version the running daemon was started from. The daemon
+	// is long-lived and machine-wide, so an upgraded CLI can be talking to a proxy
+	// that still routes by the old rules; recording it lets `up` say so instead of
+	// leaving the user with a worktree that 404s for no visible reason.
+	Build string `json:"build,omitempty"`
 }
 
 type data struct {

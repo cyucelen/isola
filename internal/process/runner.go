@@ -21,7 +21,7 @@ const stopTimeout = 10 * time.Second
 type RunnerConfig struct {
 	ServiceName string
 	Branch      string
-	BranchSlug  string
+	HostLabel   string
 	Project     string // project name, for project-qualified sibling URLs
 	Command     string
 	Dir         string // absolute working directory
@@ -72,7 +72,7 @@ func (r *Runner) Start() (int, error) {
 		return 0, fmt.Errorf("creating log dir: %w", err)
 	}
 
-	logPath := filepath.Join(r.config.LogDir, LogFileName(r.config.BranchSlug, r.config.ServiceName))
+	logPath := filepath.Join(r.config.LogDir, LogFileName(r.config.HostLabel, r.config.ServiceName))
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return 0, fmt.Errorf("opening log file: %w", err)
@@ -240,7 +240,7 @@ func (r *Runner) scheme() string {
 func (r *Runner) builtins() map[string]string {
 	m := map[string]string{
 		"ISOLA_BRANCH":      r.config.Branch,
-		"ISOLA_BRANCH_SLUG": r.config.BranchSlug,
+		"ISOLA_BRANCH_SLUG": r.config.HostLabel,
 	}
 	// The repo-root setup runs without a service; only a real service gets
 	// ISOLA_SERVICE (and, below, $PORT).
@@ -261,7 +261,7 @@ func (r *Runner) builtins() map[string]string {
 		m["ISOLA_"+up+"_DIRECT_URL"] = browser.DirectURL(svcPort)
 	}
 	for svcName, proxyPort := range r.config.AllServiceProxyPorts {
-		m["ISOLA_"+strings.ToUpper(svcName)+"_URL"] = browser.BuildURL(r.scheme(), r.config.BranchSlug, r.config.Project, proxyPort)
+		m["ISOLA_"+strings.ToUpper(svcName)+"_URL"] = browser.BuildURL(r.scheme(), r.config.HostLabel, r.config.Project, proxyPort)
 	}
 	return m
 }
@@ -289,7 +289,7 @@ func (r *Runner) resolver(builtins map[string]string) func(string) string {
 			}
 			if svc, ok := strings.CutSuffix(rest, ".url"); ok {
 				if p, ok := r.config.AllServiceProxyPorts[svc]; ok {
-					return browser.BuildURL(r.scheme(), r.config.BranchSlug, r.config.Project, p)
+					return browser.BuildURL(r.scheme(), r.config.HostLabel, r.config.Project, p)
 				}
 				return ""
 			}

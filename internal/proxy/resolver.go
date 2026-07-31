@@ -42,10 +42,12 @@ func (r *Resolver) Resolve(slug string, proxyPort int) (int, error) {
 		if e != nil {
 			return e
 		}
-		// Find the branch that matches this slug.
+		// Find the branch whose host label matches the one in the Host header.
+		// It must be derived exactly as the printed and injected URLs derive it,
+		// or a worktree whose label was shortened would never be found.
 		for key := range st.PortAssignments {
 			parts := strings.SplitN(key, ":", 2)
-			if len(parts) == 2 && git.BranchSlug(parts[0]) == slug {
+			if len(parts) == 2 && git.HostLabel(parts[0]) == slug {
 				branch = parts[0]
 				break
 			}

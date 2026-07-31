@@ -64,10 +64,10 @@ var upCmd = &cobra.Command{
 			trees = []git.Worktree{*tree}
 		}
 
-		// Warn about branch slug collisions.
-		if collisions := git.DetectSlugCollisions(trees); len(collisions) > 0 {
-			for slug, branches := range collisions {
-				logging.Warn("branches %v all map to slug %q; proxy routing may be ambiguous", branches, slug)
+		// Warn about host label collisions.
+		if collisions := git.DetectHostLabelCollisions(trees); len(collisions) > 0 {
+			for label, branches := range collisions {
+				logging.Warn("branches %v all map to host label %q; proxy routing may be ambiguous", branches, label)
 			}
 		}
 
@@ -177,6 +177,7 @@ var upCmd = &cobra.Command{
 						if hadPrev && proxyConfigChanged(prev, cfg) {
 							logging.Warn("proxy config changed but the shared proxy is already running with the old settings; restart it with `isola proxy stop` then `isola up` to apply.")
 						}
+						warnStaleProxyBuild(reg)
 					}
 
 					// Only advertise reachability when something is actually up;
@@ -199,6 +200,28 @@ var upCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// warnStaleProxyBuild reports a shared proxy still running an older isola than
+// this CLI. The daemon is machine-wide and long-lived, so it keeps routing by the
+// rules it was started with — after an upgrade that changed how a worktree's host
+// label is derived, it answers the new URLs with a 404 while every service is up,
+// which reads as a broken worktree rather than a stale proxy. Best-effort: an
+// unreadable daemon record or a build it never recorded is not worth failing over.
+func warnStaleProxyBuild(reg *registry.Store) {
+	d, err := reg.GetDaemon()
+	if err != nil {
+		return
+	}
+	cur, _, _ := versionInfo()
+	if d.Build == cur {
+		return
+	}
+	running := d.Build
+	if running == "" {
+		running = "an older release"
+	}
+	logging.Warn("the shared proxy is running %s but this is isola %s; URLs may not route until you restart it with `isola proxy stop` then `isola up`.", running, cur)
 }
 
 // ensureHTTPSTrust trusts the auto-generated HTTPS CA so browsers accept it.

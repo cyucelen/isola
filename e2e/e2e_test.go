@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cyucelen/isola/internal/git"
 	"github.com/jackc/pgx/v5"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -773,5 +774,73 @@ func TestProxyBrandedErrorForDeadBackend(t *testing.T) {
 	// "isola:" and explains that nothing is answering on the backend.
 	if !strings.Contains(body, "isola:") || !strings.Contains(strings.ToLower(body), "answering") {
 		t.Errorf("502 should be the branded isola page, got body:\n%s", body)
+	}
+}
+
+// TestLongBranchIsReachableOverHTTPS covers the whole long-branch path: a worktree
+// whose branch slug is 70 bytes, over the 63-byte DNS label limit, must still be
+// reachable at the URL isola prints, over HTTPS, with a certificate that verifies.
+// Before the label was fitted, all five pieces disagreed: the printed URL and the
+// injected ${services.X.url} carried an unresolvable host, the proxy matched on the
+// raw slug, and the cert was minted for a name browsers refuse to match.
+//
+// Note this exercises routing, injection and TLS, not OS resolution: req() forces
+// the connection with curl --resolve, exactly the blind spot that hid this bug from
+// the earlier curl check. The label-length assertion below is what stands in for a
+// real resolver.
+func TestLongBranchIsReachableOverHTTPS(t *testing.T) {
+	e := newEnv(t)
+	const branch = "dependabot/npm_and_yarn/services/manager-dashboard/ai-sdk/react-4.0.40"
+
+	body := fmt.Sprintf(`project = "e2elong"
+
+[proxy]
+enabled = true
+https = true
+auto_trust = false
+
+[services.web]
+command = %q
+port_range = { min = 4931, max = 4939 }
+proxy_port = 4930
+
+[services.web.env]
+MARKER = "${services.web.url}"
+`, testServer)
+	repo := e.newRepo(body)
+
+	wt := filepath.Join(t.TempDir(), "long")
+	e.git(repo, "worktree", "add", "-q", "-b", branch, wt)
+
+	e.isola(wt, "up")
+
+	label := git.HostLabel(branch)
+	if len(label) > 63 {
+		t.Fatalf("host label %q is %d bytes; no resolver would look it up", label, len(label))
+	}
+	host := label + ".e2elong.localhost"
+
+	// The URL `ls` prints must be the one that routes, and it must carry the
+	// fitted label rather than the raw slug.
+	var printed string
+	for _, x := range e.ls(wt) {
+		if strings.HasPrefix(x.Worktree, "dependabot") && x.Service == "web" {
+			printed = x.URL
+		}
+	}
+	if want := fmt.Sprintf("https://%s:4930", host); printed != want {
+		t.Errorf("ls printed URL %q, want %q", printed, want)
+	}
+
+	// The service echoes $MARKER, which is its own injected ${services.web.url}:
+	// one request proves the proxy routes the fitted host AND that the env handed
+	// to the app agrees with it. They must, or an app that publishes its own URL
+	// (NEXT_PUBLIC_*) hands out a dead one.
+	status, got := e.waitReq(wt, "https", host, 4930, "/", 200, host)
+	if status != 200 {
+		t.Fatalf("proxy should route the fitted host to the service: status=%d body=%q", status, got)
+	}
+	if want := fmt.Sprintf("https://%s:4930", host); strings.TrimSpace(got) != want {
+		t.Errorf("injected ${services.web.url} = %q, want %q", strings.TrimSpace(got), want)
 	}
 }

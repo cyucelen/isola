@@ -36,7 +36,8 @@ background.`,
 		if err != nil {
 			return err
 		}
-		if err := reg.SetDaemon(registry.Daemon{PID: os.Getpid(), Running: true}); err != nil {
+		build, _, _ := versionInfo()
+		if err := reg.SetDaemon(registry.Daemon{PID: os.Getpid(), Running: true, Build: build}); err != nil {
 			return fmt.Errorf("recording daemon state: %w", err)
 		}
 		defer func() { _ = reg.SetDaemon(registry.Daemon{}) }()

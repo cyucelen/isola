@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cyucelen/isola/internal/git"
 )
 
 func TestCACertReference(t *testing.T) {
@@ -59,7 +61,7 @@ func TestBuildEnv(t *testing.T) {
 		config: RunnerConfig{
 			ServiceName: "web",
 			Branch:      "feature/auth",
-			BranchSlug:  "feature-auth",
+			HostLabel:   "feature-auth",
 			Command:     "npm start",
 			Dir:         "/tmp/project",
 			Port:        3150,
@@ -156,7 +158,7 @@ func TestBuildEnvInterpolation(t *testing.T) {
 		config: RunnerConfig{
 			ServiceName: "web",
 			Branch:      "feature/auth",
-			BranchSlug:  "feature-auth",
+			HostLabel:   "feature-auth",
 			Command:     "npm start",
 			Dir:         "/tmp/project",
 			Port:        3150,
@@ -242,7 +244,7 @@ func newTestRunner(t *testing.T, command string) *Runner {
 	return NewRunner(RunnerConfig{
 		ServiceName: "test-svc",
 		Branch:      "main",
-		BranchSlug:  "main",
+		HostLabel:   "main",
 		Command:     command,
 		Dir:         t.TempDir(),
 		Port:        9999,
@@ -419,7 +421,7 @@ func TestRunnerLogOutput(t *testing.T) {
 	r := NewRunner(RunnerConfig{
 		ServiceName: "test-svc",
 		Branch:      "main",
-		BranchSlug:  "main",
+		HostLabel:   "main",
 		Command:     "echo 'hello from test'",
 		Dir:         t.TempDir(),
 		Port:        9999,
@@ -458,7 +460,7 @@ func TestRunnerWorkingDir(t *testing.T) {
 	r := NewRunner(RunnerConfig{
 		ServiceName: "test-svc",
 		Branch:      "main",
-		BranchSlug:  "main",
+		HostLabel:   "main",
 		Command:     "pwd",
 		Dir:         workDir,
 		Port:        9999,
@@ -500,7 +502,7 @@ func TestBuildEnvNullByte(t *testing.T) {
 		config: RunnerConfig{
 			ServiceName: "web",
 			Branch:      "main",
-			BranchSlug:  "main",
+			HostLabel:   "main",
 			Command:     "echo",
 			Dir:         "/tmp",
 			Port:        3000,
@@ -563,7 +565,7 @@ func TestBuildEnvAccessoryRefVerbatim(t *testing.T) {
 		config: RunnerConfig{
 			ServiceName: "web",
 			Branch:      "feature/auth",
-			BranchSlug:  "feature-auth",
+			HostLabel:   "feature-auth",
 			Command:     "npm start",
 			Port:        3150,
 			// A ${accessories.<name>.url} ref resolves to the URL as-is; a ${...}
@@ -589,7 +591,7 @@ func TestBuildEnvServiceReferences(t *testing.T) {
 	runner := &Runner{
 		config: RunnerConfig{
 			ServiceName: "web",
-			BranchSlug:  "feature-auth",
+			HostLabel:   "feature-auth",
 			Project:     "myapp",
 			Command:     "npm start",
 			Port:        3150,
@@ -618,5 +620,36 @@ func TestBuildEnvServiceReferences(t *testing.T) {
 	}
 	if lookup["API_PORT"] != "8150" {
 		t.Errorf("API_PORT = %q", lookup["API_PORT"])
+	}
+}
+
+// TestBuiltinsUseTheFittedHostLabel pins the env half of the long-branch fix: the
+// URLs handed to a service must carry a host a browser can resolve, and
+// ISOLA_BRANCH_SLUG must be the same label, so an app echoing it (or building a
+// NEXT_PUBLIC_* value from it) agrees with what isola prints and routes.
+func TestBuiltinsUseTheFittedHostLabel(t *testing.T) {
+	label := git.HostLabel("dependabot/npm_and_yarn/services/manager-dashboard/ai-sdk/react-4.0.40")
+
+	r := NewRunner(RunnerConfig{
+		ServiceName:          "web",
+		Branch:               "dependabot/npm_and_yarn/services/manager-dashboard/ai-sdk/react-4.0.40",
+		HostLabel:            label,
+		Project:              "mono",
+		Port:                 3100,
+		AllServicePorts:      map[string]int{"web": 3100},
+		AllServiceProxyPorts: map[string]int{"web": 3000},
+		ProxyScheme:          "https",
+	})
+
+	env := r.builtins()
+	if got := env["ISOLA_BRANCH_SLUG"]; got != label {
+		t.Errorf("ISOLA_BRANCH_SLUG = %q, want the host label %q", got, label)
+	}
+	if len(env["ISOLA_BRANCH_SLUG"]) > 63 {
+		t.Errorf("ISOLA_BRANCH_SLUG = %q is %d bytes, over the DNS label limit", env["ISOLA_BRANCH_SLUG"], len(env["ISOLA_BRANCH_SLUG"]))
+	}
+	want := "https://" + label + ".mono.localhost:3000"
+	if got := env["ISOLA_WEB_URL"]; got != want {
+		t.Errorf("ISOLA_WEB_URL = %q, want %q", got, want)
 	}
 }

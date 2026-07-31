@@ -110,14 +110,18 @@ literal, so a value like `p$ssw0rd` survives unchanged. There is no global
 `[env]`; declare env per service.
 
 > [!NOTE]
-> `ISOLA_BRANCH_SLUG` is the worktree's routing identity, so it is passed through
-> at full length (automated branches like `dependabot/npm_and_yarn/...` reach 85
-> characters). It is not a safe base for identifiers with a length limit. If your
-> app derives one, such as a Postgres schema or a bucket prefix, use the bounded
-> name isola already computed: the accessory's `name`, reachable as
-> `${accessories.<name>.url}`. Rebuilding a name from the slug means applying your
-> own budget, the way isola does per resource (see
-> [Writing a new accessory](writing-an-accessory.md)).
+> `ISOLA_BRANCH_SLUG` is the worktree's **host label**: the same value that
+> appears in every proxy URL, so a service echoing it agrees with what isola
+> prints and routes. It is bounded at 63 bytes, the DNS label limit, and a longer
+> branch is shortened as described under [Worktree URLs](#worktree-urls).
+>
+> 63 bytes is the hostname's budget, not everyone's. If your app derives a name
+> with a tighter limit, such as a Postgres schema or a unix socket path (108
+> bytes total on Linux, 104 on macOS), apply your own budget to it rather than
+> assuming the label fits, the way isola does per resource (see
+> [Writing a new accessory](writing-an-accessory.md)). For a database, prefer the
+> bounded name isola already computed: the accessory's `name`, reachable as
+> `${accessories.<name>.url}`.
 
 > [!IMPORTANT]
 > **Make your command bind the allocated `$PORT`.** isola injects the
@@ -272,6 +276,33 @@ auto_trust = true
 
 The proxy runs until `isola proxy stop`; it is not stopped by `isola down`. You
 can always run it manually with `isola proxy start` (foreground).
+
+### Worktree URLs
+
+A worktree is addressed by its **host label**, the first component of
+`<label>.<project>.localhost`. The label is the branch name lowercased with runs
+of non-alphanumerics collapsed to hyphens, so `feature/auth` is reachable at
+`feature-auth.<project>.localhost`.
+
+A DNS label may not exceed 63 bytes, which automated dependency branches pass on
+their own:
+
+```
+dependabot/npm_and_yarn/services/manager-dashboard/ai-sdk/react-4.0.40
+  slug   dependabot-npm-and-yarn-services-manager-dashboard-ai-sdk-react-4-0-40   (70, unusable)
+  label  dependabot-npm-and-yarn-se--hboard-ai-sdk-react-4-0-40-uzurn7gx          (63)
+```
+
+So a longer label is shortened the same way accessory names are: both ends kept,
+the middle elided, and a hash of the full slug appended. This is not cosmetic. An
+over-long label cannot be resolved (browsers return `ERR_NAME_NOT_RESOLVED`) and
+cannot be covered by a certificate either, because browsers refuse to match a SAN
+containing one, so the worktree's services would run with no reachable URL at all.
+
+The label is derived in one place, so the URL `isola ls` prints, the value
+injected as `${services.<name>.url}` and `ISOLA_BRANCH_SLUG`, the Host the proxy
+matches, and the certificate the dev CA mints all agree. Labels within 63 bytes
+are untouched, so existing URLs do not change.
 
 When `https` is on, isola generates its own CA and per-worktree certificates. So
 browsers accept them, the CA has to be trusted. On the first HTTPS `isola up` in

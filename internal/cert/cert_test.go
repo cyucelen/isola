@@ -6,7 +6,10 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/cyucelen/isola/internal/git"
 )
 
 func TestEnsureCerts_GeneratesValidCA(t *testing.T) {
@@ -177,6 +180,62 @@ func TestNewSNIGetCertificate_VerifiesSubdomain(t *testing.T) {
 				t.Errorf("chain verification for %q failed: %v", host, err)
 			}
 		})
+	}
+}
+
+// TestNewSNIGetCertificate_LongWorktreeHost covers the TLS half of the
+// long-branch failure. The leaf is minted for whatever SNI name arrives, so a
+// worktree host is only presentable if every label in it is within the 63-byte
+// DNS limit: browsers refuse to match a SAN containing an over-long label, which
+// is why issuing a certificate for the unshortened host could never work. This
+// asserts the host isola now derives is one that both verifies and stays legal.
+func TestNewSNIGetCertificate_LongWorktreeHost(t *testing.T) {
+	dir := t.TempDir()
+	paths, err := EnsureCerts(dir)
+	if err != nil {
+		t.Fatalf("EnsureCerts() error: %v", err)
+	}
+	getCert, err := NewSNIGetCertificate(paths)
+	if err != nil {
+		t.Fatalf("NewSNIGetCertificate() error: %v", err)
+	}
+	ca := loadTestCA(t, paths.CACert)
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+
+	label := git.HostLabel("dependabot/npm_and_yarn/services/manager-dashboard/ai-sdk/react-4.0.40")
+	host := label + ".mono.localhost"
+
+	cert, err := getCert(&tls.ClientHelloInfo{ServerName: host})
+	if err != nil {
+		t.Fatalf("getCert(%q) error: %v", host, err)
+	}
+	if cert.Leaf == nil {
+		t.Fatal("returned certificate has nil Leaf")
+	}
+
+	// Every SAN label must be within the limit, or a browser rejects the match
+	// with ERR_CERT_COMMON_NAME_INVALID even though the name is present.
+	for _, name := range cert.Leaf.DNSNames {
+		for _, l := range strings.Split(name, ".") {
+			if len(l) > 63 {
+				t.Errorf("SAN %q has a %d-byte label %q; browsers will not match it", name, len(l), l)
+			}
+		}
+	}
+	if len(cert.Leaf.Subject.CommonName) > 64 {
+		t.Errorf("CN %q is %d bytes, over the 64-byte X.509 limit", cert.Leaf.Subject.CommonName, len(cert.Leaf.Subject.CommonName))
+	}
+
+	if err := cert.Leaf.VerifyHostname(host); err != nil {
+		t.Errorf("VerifyHostname(%q) failed: %v", host, err)
+	}
+	if _, err := cert.Leaf.Verify(x509.VerifyOptions{
+		DNSName:   host,
+		Roots:     roots,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}); err != nil {
+		t.Errorf("chain verification for %q failed: %v", host, err)
 	}
 }
 

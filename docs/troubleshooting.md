@@ -32,6 +32,12 @@ failures and their fixes.
 - Verify your browser resolves `*.localhost` (all modern browsers do), including the three-label `<branch>.<project>.localhost`.
 - Check that the target service is actually running with `isola ls`.
 - URLs are project-qualified: access via `http://<branch-slug>.<project>.localhost:<proxy_port>` (a bare `<branch>.localhost` is not routed). `<project>` defaults to the repo's directory name; set it with `project` in `.isola.toml`.
+- Always use the URL `isola ls` prints. A long branch name gets a shortened host
+  label (see [Worktree URLs](configuration.md#worktree-urls)), so a URL assembled
+  by hand from the branch name will not resolve and will not match the
+  certificate. If a browser reports `ERR_NAME_NOT_RESOLVED` or
+  `ERR_CERT_COMMON_NAME_INVALID` for a worktree whose services are running, check
+  the first label of the host against `isola ls`, and that it is at most 63 bytes.
 
 ## Server-side calls between services
 

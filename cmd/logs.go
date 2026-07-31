@@ -136,10 +136,10 @@ func logsTargets(tree *git.Worktree, store *state.FileStore) []logTarget {
 		logging.Warn("failed to load state: %v", err)
 	}
 
-	slug := tree.Slug()
+	hostLabel := tree.HostLabel()
 	var targets []logTarget
 	for _, svc := range services {
-		path := process.LogPath(store.Dir(), slug, svc)
+		path := process.LogPath(store.Dir(), hostLabel, svc)
 		_, statErr := os.Stat(path)
 		if statErr != nil && !logsFollow {
 			continue // no log yet and not following: nothing to show

@@ -4,12 +4,20 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+
+	"github.com/cyucelen/isola/internal/slug"
 )
 
 // BuildURL constructs the project-qualified proxy URL for a service, e.g.
 // "http://feature-auth.myapp.localhost:3000".
-func BuildURL(scheme, slug, project string, proxyPort int) string {
-	host := slug
+//
+// The worktree label is fitted to the 63-byte DNS label limit here as well as at
+// the point it is derived (git.HostLabel), so every URL isola prints, injects, or
+// opens is one a resolver and a browser will accept even if a caller passes an
+// unfitted slug. Fitting is idempotent, so a label that already fits is used
+// verbatim and this agrees byte-for-byte with the Host the proxy matches.
+func BuildURL(scheme, hostLabel, project string, proxyPort int) string {
+	host := slug.Fit(hostLabel, slug.DNSLabelMax)
 	if project != "" {
 		host += "." + project
 	}

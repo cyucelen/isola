@@ -417,7 +417,7 @@ func TestModelUpdate_StopAll(t *testing.T) {
 
 func TestOpenSelected_NotRunning(t *testing.T) {
 	rows := []ServiceRow{
-		{Branch: "main", Slug: "main", Service: "frontend", Port: 3100, Status: state.StatusStopped},
+		{Branch: "main", HostLabel: "main", Service: "frontend", Port: 3100, Status: state.StatusStopped},
 	}
 	m := testModel(t, rows)
 	m.cfg = &config.Config{
@@ -441,7 +441,7 @@ func TestOpenSelected_NotRunning(t *testing.T) {
 
 func TestViewLogs_NoLogFile(t *testing.T) {
 	rows := []ServiceRow{
-		{Branch: "main", Slug: "main", Service: "frontend"},
+		{Branch: "main", HostLabel: "main", Service: "frontend"},
 	}
 	m := testModel(t, rows)
 
@@ -457,7 +457,7 @@ func TestViewLogs_NoLogFile(t *testing.T) {
 
 func TestViewLogs_WithLogFile(t *testing.T) {
 	rows := []ServiceRow{
-		{Branch: "main", Slug: "main", Service: "frontend"},
+		{Branch: "main", HostLabel: "main", Service: "frontend"},
 	}
 	m := testModel(t, rows)
 

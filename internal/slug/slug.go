@@ -36,6 +36,12 @@ const (
 	// Callers with a smaller budget should report it rather than name a resource
 	// after a bare hash.
 	MinFit = hashLen + 1 + 2
+	// DNSLabelMax is the maximum length of a single DNS label (RFC 1035 §2.3.4),
+	// the budget for the "<worktree>" part of "<worktree>.<project>.localhost".
+	// It is enforced by resolvers and by browsers, which refuse both to look up an
+	// over-long label and to match a TLS SAN containing one, so a longer label
+	// makes a worktree unreachable even though its services are running.
+	DNSLabelMax = 63
 )
 
 var nonAlphaNum = regexp.MustCompile(`[^a-zA-Z0-9]+`)
