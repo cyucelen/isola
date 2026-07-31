@@ -319,3 +319,18 @@ func TestValidIdent(t *testing.T) {
 		}
 	}
 }
+
+func TestDescribeResource(t *testing.T) {
+	got, err := describeResource(map[string]string{"database": "myapp_feature-auth"})
+	if err != nil {
+		t.Fatalf("describeResource: %v", err)
+	}
+	if got["database"] != "myapp_feature-auth" {
+		t.Errorf("resource = %v, want the database name", got)
+	}
+	// A record with no database name is unreadable rather than an empty string,
+	// so `ls --json` reports it instead of emitting a resource pointing nowhere.
+	if _, err := describeResource(map[string]string{}); err == nil {
+		t.Error("a handle with no database should be rejected")
+	}
+}

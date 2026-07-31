@@ -24,7 +24,8 @@ isola dash                     # interactive TUI
 isola proxy start              # run the proxy manually (up auto-starts it); [proxy] enabled=false to opt out; HTTPS via [proxy] https=true
 isola proxy stop               # stop the proxy (it is never auto-stopped)
 isola logs [worktree] [-f] [-n N] [-s svc]
-isola accessory ls|up|reset|drop [name]           # per-worktree databases (up = bring up / reuse)
+isola accessory ls [--json] | up|reset|drop [name]  # per-worktree databases (up = bring up / reuse)
+                               # ls --json gives the real db name (never derive it from the branch)
 isola doctor                   # health checks
 isola update [--check]         # update isola to the latest release (self-update or via package manager)
 ```

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,10 +28,43 @@ on 'isola down --prune'. These verbs let you operate them out of band. Pass a
 name to act on a single accessory; omit it to act on all.`,
 }
 
+// accessoryEntry is one accessory of one worktree in `accessory ls --json`. It
+// carries the same facts as the table, with the resource structured rather than
+// rendered: a consumer reads the provisioned database name instead of parsing it
+// back out of a "key=value,..." display string. Resource is null when the
+// accessory has not been brought up.
+type accessoryEntry struct {
+	Worktree    string             `json:"worktree"`
+	Accessory   string             `json:"accessory"`
+	Kind        string             `json:"kind"`
+	Provisioned bool               `json:"provisioned"`
+	Resource    accessory.Resource `json:"resource"`
+}
+
+// accessoryRow is one enumerated (worktree, accessory) pair, holding the raw
+// Handle so the table and the JSON can render the same rows in the same order
+// without either format deciding what the other shows.
+type accessoryRow struct {
+	worktree    string
+	accessory   string
+	kind        string
+	provisioned bool
+	handle      map[string]string
+}
+
 var accessoryLsCmd = &cobra.Command{
 	Use:   "ls",
 	Short: "List accessories and their state",
+	Long: `List each worktree's accessories, their kind, and the resource provisioned
+for them.
+
+Use --json to output the result as a JSON array for scripting and automation. It
+is the supported way to discover a worktree's provisioned resource (a database
+name, say), which cannot be derived from the branch name: a long branch is fitted
+to its resource's length limit with a hash.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		asJSON, _ := cmd.Flags().GetBool("json")
+
 		cwd, err := os.Getwd()
 		if err != nil {
 			return err
@@ -50,27 +84,83 @@ var accessoryLsCmd = &cobra.Command{
 
 		names := sortedAccessoryNames()
 		if len(names) == 0 {
+			// No accessories is not an error; in JSON it is an empty array, which
+			// says the same thing without a consumer special-casing anything.
+			if asJSON {
+				return json.NewEncoder(os.Stdout).Encode([]accessoryEntry{})
+			}
 			logging.Info("No accessories configured in %s.", ".isola.toml")
 			return nil
 		}
 
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-		_, _ = fmt.Fprintln(w, "WORKTREE\tACCESSORY\tKIND\tRESOURCE\tPROVISIONED")
-		for _, tree := range trees {
-			if tree.IsBare {
-				continue
+		rows := buildAccessoryRows(trees, names, st)
+		if asJSON {
+			return json.NewEncoder(os.Stdout).Encode(accessoryEntries(rows))
+		}
+		return printAccessoryTable(rows)
+	},
+}
+
+// buildAccessoryRows enumerates every configured accessory for every live
+// worktree, in worktree order with accessories sorted by name.
+func buildAccessoryRows(trees []git.Worktree, names []string, st *state.State) []accessoryRow {
+	rows := make([]accessoryRow, 0, len(trees)*len(names))
+	for _, tree := range trees {
+		if tree.IsBare {
+			continue
+		}
+		for _, name := range names {
+			// An unprovisioned accessory has no record, so its kind comes from
+			// config; a provisioned one reports the kind it was created with,
+			// which is what teardown will use even if config has since changed.
+			kind, _ := cfg.AccessoryKind(cfg.Accessories[name])
+			row := accessoryRow{worktree: tree.Branch, accessory: name, kind: kind}
+			if rec := state.GetAccessoryState(st, tree.Branch, name); rec != nil {
+				row.kind, row.provisioned, row.handle = rec.Kind, true, rec.Handle
 			}
-			for _, name := range names {
-				kind, _ := cfg.AccessoryKind(cfg.Accessories[name])
-				resource, provisioned := "—", "no"
-				if rec := state.GetAccessoryState(st, tree.Branch, name); rec != nil {
-					resource, provisioned, kind = formatHandle(rec.Handle), "yes", rec.Kind
-				}
-				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", tree.Branch, name, kind, resource, provisioned)
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+// accessoryEntries converts rows to their JSON form, asking each kind to shape
+// its own Handle. A resource that cannot be shaped (a kind this build does not
+// have, a Handle missing its fields) is reported on stderr and left null, so one
+// unreadable record does not cost the caller every other row.
+func accessoryEntries(rows []accessoryRow) []accessoryEntry {
+	entries := make([]accessoryEntry, 0, len(rows))
+	for _, r := range rows {
+		e := accessoryEntry{
+			Worktree:    r.worktree,
+			Accessory:   r.accessory,
+			Kind:        r.kind,
+			Provisioned: r.provisioned,
+		}
+		if r.provisioned {
+			resource, err := accessory.DescribeResource(r.kind, r.handle)
+			if err != nil {
+				logging.Warn("%s/%s: cannot describe resource: %v", r.worktree, r.accessory, err)
+			} else {
+				e.Resource = resource
 			}
 		}
-		return w.Flush()
-	},
+		entries = append(entries, e)
+	}
+	return entries
+}
+
+func printAccessoryTable(rows []accessoryRow) error {
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	_, _ = fmt.Fprintln(w, "WORKTREE\tACCESSORY\tKIND\tRESOURCE\tPROVISIONED")
+	for _, r := range rows {
+		resource, provisioned := "—", "no"
+		if r.provisioned {
+			resource, provisioned = formatHandle(r.handle), "yes"
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.worktree, r.accessory, r.kind, resource, provisioned)
+	}
+	return w.Flush()
 }
 
 var accessoryUpCmd = &cobra.Command{
@@ -261,6 +351,7 @@ func forgetAccessory(store *state.FileStore, branch, name string) {
 }
 
 func init() {
+	accessoryLsCmd.Flags().Bool("json", false, "Output in JSON format")
 	accessoryCmd.AddCommand(accessoryLsCmd, accessoryUpCmd, accessoryResetCmd, accessoryDropCmd)
 	rootCmd.AddCommand(accessoryCmd)
 }

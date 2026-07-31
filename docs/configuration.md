@@ -251,6 +251,36 @@ Manage accessories out of band with `isola accessory ls|up|reset|drop [name]`
 (`up` brings up this worktree's accessories, reusing any that already exist). To
 add a new accessory kind, see [Writing a new accessory](writing-an-accessory.md).
 
+`isola accessory ls --json` prints one object per accessory per worktree, for
+scripting:
+
+```json
+[
+  {
+    "worktree": "feature/auth",
+    "accessory": "database",
+    "kind": "postgres",
+    "provisioned": true,
+    "resource": { "database": "myapp_feature-auth" }
+  },
+  {
+    "worktree": "feature/auth",
+    "accessory": "cache",
+    "kind": "redis",
+    "provisioned": true,
+    "resource": { "db": 12, "owner": "myapp:feature-auth" }
+  }
+]
+```
+
+`resource` is structured per kind, not a string to re-parse: `postgres` reports
+`{ database }`, `redis` reports `{ db, owner }` with the logical database as a
+number, and a new kind declares its own fields. It is `null` when the accessory
+has not been brought up, and the array is empty when none are configured. This is
+the supported way to learn a worktree's real database name, which cannot be
+derived from the branch: a long branch is fitted to the identifier limit with a
+hash. Warnings go to stderr, so stdout stays parseable.
+
 ## `[proxy]`
 
 A single machine-wide proxy serves every isola project, routing

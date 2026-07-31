@@ -19,6 +19,19 @@ import (
 
 func init() {
 	accessory.Register("postgres", New)
+	accessory.RegisterResource("postgres", describeResource)
+}
+
+// describeResource exposes the database this worktree was provisioned. It is the
+// one field a consumer needs and the one it cannot recompute: a long branch name
+// is fitted to the identifier limit with a hash, so a name derived from the branch
+// would point at a database that does not exist.
+func describeResource(handle map[string]string) (accessory.Resource, error) {
+	db := handle[handleDatabase]
+	if db == "" {
+		return nil, fmt.Errorf("handle records no %q", handleDatabase)
+	}
+	return accessory.Resource{handleDatabase: db}, nil
 }
 
 // connectTimeout bounds establishing a connection. The overall per-operation

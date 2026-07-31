@@ -18,6 +18,18 @@ import (
 
 func init() {
 	accessory.Register("redis", New)
+	accessory.RegisterResource("redis", describeResource)
+}
+
+// describeResource exposes the assigned logical database and the owner tag that
+// claims it. The database is emitted as a number: it indexes a fixed set of
+// logical DBs, and a consumer building a connection URL needs it as one.
+func describeResource(handle map[string]string) (accessory.Resource, error) {
+	db, err := strconv.Atoi(handle[handleDB])
+	if err != nil {
+		return nil, fmt.Errorf("handle %q is not a logical database number: %w", handle[handleDB], err)
+	}
+	return accessory.Resource{handleDB: db, handleOwner: handle[handleOwner]}, nil
 }
 
 const (

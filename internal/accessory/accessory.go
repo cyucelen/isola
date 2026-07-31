@@ -129,6 +129,42 @@ type Provisioned struct {
 	URL string
 }
 
+// Resource is the structured view of a Handle, for machine-readable output
+// (`isola accessory ls --json`). A Handle is all strings because state is; a
+// Resource restores the types a consumer expects — a Redis logical database is a
+// number — so nothing has to be parsed back out of a display string.
+type Resource map[string]any
+
+// ResourceShaper renders a persisted Handle as a Resource. It returns an error
+// when the Handle does not hold what its kind expects, so a caller can report the
+// record as unreadable rather than emit a half-built resource.
+type ResourceShaper func(handle map[string]string) (Resource, error)
+
+var resourceShapers = map[string]ResourceShaper{}
+
+// RegisterResource declares how kind renders its Handle as structured data.
+// Drivers call it from init() alongside Register, so a kind owns the shape of its
+// own JSON and no shared code switches on kind names. Registering the same kind
+// twice panics, as it indicates a build-time mistake.
+func RegisterResource(kind string, f ResourceShaper) {
+	if _, dup := resourceShapers[kind]; dup {
+		panic(fmt.Sprintf("accessory: resource shape for kind %q registered twice", kind))
+	}
+	resourceShapers[kind] = f
+}
+
+// DescribeResource returns the structured form of a recorded Handle. It reports an
+// error for a kind that declared no shape (a third-party driver, or one this build
+// no longer has) as well as for a Handle its own shaper rejects, so a caller can
+// say so instead of guessing at the fields.
+func DescribeResource(kind string, handle map[string]string) (Resource, error) {
+	f, ok := resourceShapers[kind]
+	if !ok {
+		return nil, fmt.Errorf("kind %q declares no resource shape", kind)
+	}
+	return f(handle)
+}
+
 // Accessory is a driver instance bound to one [accessories.<name>] config entry.
 // The core contract is Provision + Drop; Reset is the optional Resettable
 // capability, since only Kinds with a Template have a baseline to reset to.

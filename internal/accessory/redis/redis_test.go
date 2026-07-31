@@ -218,3 +218,20 @@ func TestOwnerIDQualifiesByProject(t *testing.T) {
 		t.Errorf("ownerID (no project) = %q, want main", got)
 	}
 }
+
+func TestDescribeResource(t *testing.T) {
+	got, err := describeResource(map[string]string{"db": "12", "owner": "mono:feature-auth"})
+	if err != nil {
+		t.Fatalf("describeResource: %v", err)
+	}
+	// The logical database is typed as a number, not the string state holds.
+	if db, ok := got["db"].(int); !ok || db != 12 {
+		t.Errorf("resource[db] = %#v (%T), want int 12", got["db"], got["db"])
+	}
+	if got["owner"] != "mono:feature-auth" {
+		t.Errorf("resource[owner] = %v", got["owner"])
+	}
+	if _, err := describeResource(map[string]string{"db": "twelve"}); err == nil {
+		t.Error("a non-numeric logical database should be rejected")
+	}
+}

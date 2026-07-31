@@ -286,7 +286,7 @@ case.
 | `isola destroy`         | Stop the current worktree's services and drop its database (opposite of `up`)                |
 | `isola ls`              | List all worktrees, services, ports, status, and URLs                                        |
 | `isola logs [worktree]` | Tail a worktree's service logs                                                               |
-| `isola accessory`       | Manage per-worktree databases: `ls`, `up`, `reset`, `drop`                                   |
+| `isola accessory`       | Manage per-worktree databases: `ls` (`--json`), `up`, `reset`, `drop`                        |
 | `isola dash`            | Open the interactive TUI dashboard                                                           |
 | `isola proxy start`     | Start the machine-wide reverse proxy (auto-started by `up`)                                  |
 | `isola proxy stop`      | Stop the reverse proxy                                                                       |

@@ -11,6 +11,7 @@ import (
 	"github.com/cyucelen/isola/internal/logging"
 	"github.com/cyucelen/isola/internal/registry"
 	"github.com/cyucelen/isola/internal/state"
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
@@ -106,6 +107,15 @@ func resetRootCmd() {
 	proxyStartCmd.Flags().VisitAll(func(f *pflag.Flag) {
 		f.Changed = false
 	})
+
+	// Local command flags keep their value across Execute() calls in one test
+	// binary, so a --json passed by one test would leak into the next.
+	for _, c := range []*cobra.Command{lsCmd, accessoryLsCmd} {
+		c.Flags().VisitAll(func(f *pflag.Flag) {
+			_ = f.Value.Set(f.DefValue)
+			f.Changed = false
+		})
+	}
 
 	// Reset logging level and persistent flag "changed" state.
 	logging.SetLevel(logging.LevelNormal)
