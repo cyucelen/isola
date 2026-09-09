@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/cyucelen/isola/internal/config"
 	"github.com/cyucelen/isola/internal/git"
@@ -46,10 +46,13 @@ func TestModelView_Empty(t *testing.T) {
 	m := testModel(t, nil)
 	view := m.View()
 
-	if !strings.Contains(view, "isola dashboard") {
+	if !view.AltScreen {
+		t.Error("dashboard should use the alternate screen")
+	}
+	if !strings.Contains(view.Content, "isola dashboard") {
 		t.Error("view should contain title")
 	}
-	if !strings.Contains(view, "WORKTREE") {
+	if !strings.Contains(view.Content, "WORKTREE") {
 		t.Error("view should contain table header")
 	}
 }
@@ -59,7 +62,7 @@ func TestModelView_WithRows(t *testing.T) {
 		{Branch: "main", Service: "frontend", Port: 3100, Status: state.StatusRunning, PID: 123},
 	}
 	m := testModel(t, rows)
-	view := m.View()
+	view := m.View().Content
 
 	if !strings.Contains(view, "main") {
 		t.Error("view should contain worktree name")
@@ -73,7 +76,7 @@ func TestModelView_TerminalTooSmall(t *testing.T) {
 	m := testModel(t, nil)
 	m.width = 40
 	m.height = 5
-	view := m.View()
+	view := m.View().Content
 
 	if !strings.Contains(view, "Terminal too small") {
 		t.Error("should show terminal too small message")
@@ -83,7 +86,7 @@ func TestModelView_TerminalTooSmall(t *testing.T) {
 func TestModelView_WithStatusMessage(t *testing.T) {
 	m := testModel(t, nil)
 	m.statusMsg = "Started frontend for main"
-	view := m.View()
+	view := m.View().Content
 
 	if !strings.Contains(view, "Started frontend for main") {
 		t.Error("view should contain status message")
@@ -113,28 +116,28 @@ func TestModelUpdate_CursorMovement(t *testing.T) {
 	m := testModel(t, rows)
 
 	// Move down
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	model := mustModel(t, updated)
 	if model.cursor != 1 {
 		t.Errorf("after 'j', cursor = %d, want 1", model.cursor)
 	}
 
 	// Move down again
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	updated, _ = model.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	model = mustModel(t, updated)
 	if model.cursor != 2 {
 		t.Errorf("after second 'j', cursor = %d, want 2", model.cursor)
 	}
 
 	// Move down at bottom (should stay)
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	updated, _ = model.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	model = mustModel(t, updated)
 	if model.cursor != 2 {
 		t.Errorf("at bottom 'j', cursor = %d, want 2", model.cursor)
 	}
 
 	// Move up
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	updated, _ = model.Update(tea.KeyPressMsg{Code: 'k', Text: "k"})
 	model = mustModel(t, updated)
 	if model.cursor != 1 {
 		t.Errorf("after 'k', cursor = %d, want 1", model.cursor)
@@ -147,7 +150,7 @@ func TestModelUpdate_CursorUpAtTop(t *testing.T) {
 	}
 	m := testModel(t, rows)
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'k', Text: "k"})
 	model := mustModel(t, updated)
 	if model.cursor != 0 {
 		t.Errorf("at top 'k', cursor = %d, want 0", model.cursor)
@@ -161,13 +164,13 @@ func TestModelUpdate_ArrowKeys(t *testing.T) {
 	}
 	m := testModel(t, rows)
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	model := mustModel(t, updated)
 	if model.cursor != 1 {
 		t.Errorf("after down arrow, cursor = %d, want 1", model.cursor)
 	}
 
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	updated, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	model = mustModel(t, updated)
 	if model.cursor != 0 {
 		t.Errorf("after up arrow, cursor = %d, want 0", model.cursor)
@@ -177,7 +180,7 @@ func TestModelUpdate_ArrowKeys(t *testing.T) {
 func TestModelUpdate_QuitKey(t *testing.T) {
 	m := testModel(t, nil)
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
 	if cmd == nil {
 		t.Error("'q' should return a quit command")
 	}
@@ -239,7 +242,7 @@ func TestModelUpdate_ToggleProxy(t *testing.T) {
 	// Pressing 'p' dispatches an async command that starts/stops the proxy; it
 	// must not be executed here (it would self-exec the test binary), so we only
 	// assert the keybinding is wired to a command.
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'p', Text: "p"})
 	if cmd == nil {
 		t.Error("toggle proxy should return a command")
 	}
@@ -290,7 +293,7 @@ func TestModelView_ProxyStatus(t *testing.T) {
 		m := testModel(t, nil)
 		m.proxyRunning = true
 		m.proxyPorts = []int{3000, 8000}
-		view := m.View()
+		view := m.View().Content
 		if !strings.Contains(view, "● running") {
 			t.Error("should show proxy running")
 		}
@@ -299,7 +302,7 @@ func TestModelView_ProxyStatus(t *testing.T) {
 	t.Run("proxy stopped", func(t *testing.T) {
 		m := testModel(t, nil)
 		m.proxyRunning = false
-		view := m.View()
+		view := m.View().Content
 		if !strings.Contains(view, "○ stopped") {
 			t.Error("should show proxy stopped")
 		}
@@ -310,7 +313,7 @@ func TestModelView_DefaultWidth(t *testing.T) {
 	m := testModel(t, nil)
 	m.width = 0 // Before first WindowSizeMsg
 	m.height = 0
-	view := m.View()
+	view := m.View().Content
 
 	// Should not panic, should use default width
 	if view == "" {
@@ -375,43 +378,43 @@ func TestModelInit(t *testing.T) {
 func TestModelUpdate_StartSelectedNoRows(t *testing.T) {
 	m := testModel(t, nil)
 	// Press 's' with no rows should not panic
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
 	_ = updated
 }
 
 func TestModelUpdate_StopSelectedNoRows(t *testing.T) {
 	m := testModel(t, nil)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	_ = updated
 }
 
 func TestModelUpdate_RestartSelectedNoRows(t *testing.T) {
 	m := testModel(t, nil)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	_ = updated
 }
 
 func TestModelUpdate_OpenSelectedNoRows(t *testing.T) {
 	m := testModel(t, nil)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	_ = updated
 }
 
 func TestModelUpdate_ViewLogsNoRows(t *testing.T) {
 	m := testModel(t, nil)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'l', Text: "l"})
 	_ = updated
 }
 
 func TestModelUpdate_StartAll(t *testing.T) {
 	m := testModel(t, nil)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
 	_ = updated
 }
 
 func TestModelUpdate_StopAll(t *testing.T) {
 	m := testModel(t, nil)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'X', Text: "X"})
 	_ = updated
 }
 

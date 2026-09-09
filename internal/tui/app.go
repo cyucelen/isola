@@ -7,8 +7,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/cyucelen/isola/internal/browser"
 	"github.com/cyucelen/isola/internal/config"
@@ -125,7 +125,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = msg.Message
 		return m, m.refreshStatus
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
 
@@ -133,33 +133,37 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // View implements tea.Model.
-func (m *Model) View() string {
+func (m *Model) View() tea.View {
+	var content string
 	if m.width > 0 && m.height > 0 && (m.width < minTermWidth || m.height < minTermHeight) {
-		return fmt.Sprintf("Terminal too small (%dx%d). Minimum: %dx%d.",
+		content = fmt.Sprintf("Terminal too small (%dx%d). Minimum: %dx%d.",
 			m.width, m.height, minTermWidth, minTermHeight)
+	} else {
+		title := titleStyle.Render(" isola dashboard ")
+
+		// Use minTermWidth as default before the first WindowSizeMsg arrives.
+		tableWidth := m.width
+		if tableWidth == 0 {
+			tableWidth = minTermWidth
+		}
+		table := renderTable(m.rows, m.cursor, tableWidth)
+		proxyLine := renderProxyStatus(m.proxyRunning, m.proxyPorts)
+		help := renderHelp(m.keys, tableWidth)
+
+		content = fmt.Sprintf("%s\n\n%s\n%s\n%s", title, table, proxyLine, help)
+
+		if m.statusMsg != "" {
+			content += "\n\n" + m.statusMsg
+		}
+		content = borderStyle.Render(content) + "\n"
 	}
 
-	title := titleStyle.Render(" isola dashboard ")
-
-	// Use minTermWidth as default before the first WindowSizeMsg arrives.
-	tableWidth := m.width
-	if tableWidth == 0 {
-		tableWidth = minTermWidth
-	}
-	table := renderTable(m.rows, m.cursor, tableWidth)
-	proxyLine := renderProxyStatus(m.proxyRunning, m.proxyPorts)
-	help := renderHelp(m.keys, tableWidth)
-
-	content := fmt.Sprintf("%s\n\n%s\n%s\n%s", title, table, proxyLine, help)
-
-	if m.statusMsg != "" {
-		content += "\n\n" + m.statusMsg
-	}
-
-	return borderStyle.Render(content) + "\n"
+	view := tea.NewView(content)
+	view.AltScreen = true
+	return view
 }
 
-func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
@@ -411,7 +415,7 @@ func Run(cfg *config.Config, repoRoot, stateRoot string) error {
 		return err
 	}
 
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model)
 	_, err = p.Run()
 	return err
 }
