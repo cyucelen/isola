@@ -25,7 +25,7 @@ func TestNonInteractiveCommandDoesNotQueryTerminalColors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start isola on pseudo-terminal: %v", err)
 	}
-	defer terminal.Close()
+	defer func() { _ = terminal.Close() }()
 
 	out, readErr := io.ReadAll(terminal)
 	if readErr != nil && !errors.Is(readErr, syscall.EIO) {
