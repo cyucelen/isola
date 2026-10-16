@@ -8,8 +8,24 @@
 
 <h1 align="center">isola</h1>
 
-**Run many isolated dev environments on one machine, one per git worktree.** Each worktree gets its own services, its own environment variables, and its own database cloned from a template. No Docker, no `/etc/hosts`, no port juggling, and it's built for the  parallel AI
-coding agents.
+**Run parallel coding agents with separate services, ports, and databases per git worktree.**
+
+Git worktrees separate your code. Your running services and dev database need
+their own isolation too. isola gives each worktree its own processes, URLs,
+environment variables, and, when configured, a Postgres database cloned from a
+template.
+
+One binary. No Docker required. Works with your existing git worktrees.
+Postgres and Redis accessories use servers you already run.
+
+[Quick start](#quick-start) · [Configuration](docs/configuration.md) · [Troubleshooting](docs/troubleshooting.md)
+
+## Demo
+
+![Start services and provision a separate database for a git worktree with isola](./demo/demo-workflow.gif)
+
+**Try the database isolation proof:** [run two worktrees, delete data in one, and
+verify the other is unchanged](demo/README.md#run-the-database-isolation-proof).
 
 ## Why isola
 
@@ -43,12 +59,8 @@ agents, run fully isolated, side by side, and clean up after themselves.
 - **Automatic setup**: each service can declare a setup step (install dependencies, run migrations, generate code) that isola runs before starting it, in the worktree's own environment, so a fresh worktree is ready with no manual prep. A top-level `setup` covers repo-root steps that belong to the whole worktree (a root install that wires up git hooks, generating a shared client), run once before any service
 - **AI-agent friendly**: machine-readable output plus an installable [agent skill](#quick-start), so coding agents can drive it
 - **TUI dashboard**: a terminal dashboard to start, stop, and monitor everything at once
-- **Zero dependencies**: just one binary to install, no Docker
+- **Single binary**: no Docker required; use your existing runtimes and database servers
 - **Per-worktree overrides**: change commands, ports, or environment per branch
-
-## Demo
-
-![isola workflow demo](./demo/demo-workflow.gif)
 
 ## Quick Start
 
@@ -405,6 +417,9 @@ auto-generated HTTPS CA and certificates (`certs/`), so one proxy and one truste
 CA cover every project.
 
 ## Contributing
+
+Using isola with parallel coding agents? [Share your setup or report a problem](https://github.com/cyucelen/isola/issues).
+If it makes your worktrees easier to run, consider starring the repository.
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing`)
