@@ -24,9 +24,6 @@ Postgres and Redis accessories use servers you already run.
 
 ![Start services and provision a separate database for a git worktree with isola](./demo/demo-workflow.gif)
 
-**Try the database isolation proof:** [run two worktrees, delete data in one, and
-verify the other is unchanged](demo/README.md#run-the-database-isolation-proof).
-
 ## Why isola
 
 Git [worktrees](https://git-scm.com/docs/git-worktree) let you check out several

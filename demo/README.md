@@ -2,40 +2,6 @@
 
 This directory contains VHS tape files for generating demo GIFs for the README.
 
-## Run the database isolation proof
-
-See what happens when one worktree deletes its data while another is running:
-
-With isola already installed, run this from the repository root (requires git,
-Python 3, and running Docker):
-
-```bash
-python3 demo/prove-isolation.py
-```
-
-Or build isola from source first:
-
-```bash
-# From the isola repository root; requires Go, git, Python 3, and running Docker.
-go build -o isola .
-python3 demo/prove-isolation.py --isola ./isola
-```
-
-The script creates a temporary git repository, two worktrees, and a disposable
-Postgres 16 container. Each worktree runs an HTTP service using its injected
-`PORT` and `DATABASE_URL`. Both begin with three todos. The script deletes the
-feature worktree's todos, reads both services, and verifies that main still has
-three. It also verifies that `isola destroy` drops the worktree databases and
-preserves the template.
-
-The container binds a randomly allocated loopback port. The script cleans up its
-services, container, and temporary files when it exits normally or raises an
-exception. The demo disables isola's proxy and tests the services directly.
-Docker and the Python service's use of `docker exec` are conveniences for this
-self-contained fixture; isola itself connects to your existing Postgres server.
-
-The final checks print `PASS` only after reading the actual services and database.
-
 ## Prerequisites
 
 - [VHS](https://github.com/charmbracelet/vhs) - Terminal recorder
