@@ -16,6 +16,9 @@ const (
 	StatusRunning = "running"
 	// StatusStopped indicates a stopped service or proxy.
 	StatusStopped = "stopped"
+	// StatusOnDemand arms a service for startup on its first proxy request.
+	// An explicit stop clears this state, so requests cannot undo `down`.
+	StatusOnDemand = "on-demand"
 )
 
 const lockTimeout = 10 * time.Second
@@ -24,7 +27,7 @@ const lockTimeout = 10 * time.Second
 type ServiceState struct {
 	Port      int    `json:"port"`
 	PID       int    `json:"pid"`
-	Status    string `json:"status"` // StatusRunning, StatusStopped
+	Status    string `json:"status"` // StatusRunning, StatusStopped, StatusOnDemand
 	StartedAt string `json:"started_at"`
 }
 

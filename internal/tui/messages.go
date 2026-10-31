@@ -21,7 +21,7 @@ type ServiceRow struct {
 	HostLabel string
 	Service   string
 	Port      int
-	Status    string // state.StatusRunning or state.StatusStopped
+	Status    string // state.StatusRunning, state.StatusStopped, or state.StatusOnDemand
 	PID       int
 }
 

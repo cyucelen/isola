@@ -101,6 +101,7 @@ func (r *Runner) Start() (int, error) {
 	// Wait() twice on the same exec.Cmd.
 	go func() {
 		_ = r.cmd.Wait()
+		_ = f.Close()
 		close(r.done)
 	}()
 

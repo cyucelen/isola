@@ -214,6 +214,8 @@ func (c *Config) AccessoryKind(prim toml.Primitive) (string, error) {
 // ServiceConfig defines a single service within a worktree.
 type ServiceConfig struct {
 	Command string `toml:"command"`
+	// OnDemand defers startup until an explicit start or the first proxy request.
+	OnDemand bool `toml:"on_demand"`
 	// Setup runs once before Command on each `isola up`, in the service's Dir
 	// with its full resolved env (accessory URLs included). Use it for install
 	// or migration steps a fresh worktree needs (e.g. "npm install"). Make it

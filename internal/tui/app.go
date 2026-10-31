@@ -250,9 +250,12 @@ func (m *Model) refreshStatus() tea.Msg {
 			if ss != nil {
 				row.Port = ss.Port
 				row.PID = ss.PID
-				if ss.PID > 0 && process.IsProcessRunning(ss.PID) {
+				switch {
+				case ss.PID > 0 && process.IsProcessRunning(ss.PID):
 					row.Status = state.StatusRunning
-				} else {
+				case ss.Status == state.StatusOnDemand:
+					row.Status = state.StatusOnDemand
+				default:
 					row.Status = state.StatusStopped
 				}
 			} else {
@@ -337,7 +340,7 @@ func (m *Model) openSelected() tea.Msg {
 		return ActionResultMsg{Message: "No service selected"}
 	}
 
-	if row.Status != state.StatusRunning {
+	if row.Status != state.StatusRunning && row.Status != state.StatusOnDemand {
 		return ActionResultMsg{Message: fmt.Sprintf("%s/%s is not running, start it first", row.Branch, row.Service), IsError: true}
 	}
 
@@ -361,16 +364,23 @@ func (m *Model) openSelected() tea.Msg {
 // the call handled without error, under verb (e.g. "Started").
 func (m *Model) actOnAll(verb string, act func(*git.Worktree, string) []process.ServiceResult) tea.Msg {
 	count := 0
+	onDemand := 0
 	for _, tree := range m.trees {
 		if tree.IsBare {
 			continue
 		}
 		tree := tree
 		for _, r := range act(&tree, "") {
-			if r.Err == nil {
+			if r.Err == nil && r.OnDemand {
+				onDemand++
+			}
+			if r.Err == nil && !r.OnDemand {
 				count++
 			}
 		}
+	}
+	if onDemand > 0 {
+		return ActionResultMsg{Message: fmt.Sprintf("%s %d services; %d on demand", verb, count, onDemand)}
 	}
 	return ActionResultMsg{Message: fmt.Sprintf("%s %d services", verb, count)}
 }

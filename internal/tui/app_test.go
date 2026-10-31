@@ -10,8 +10,45 @@ import (
 
 	"github.com/cyucelen/isola/internal/config"
 	"github.com/cyucelen/isola/internal/git"
+	"github.com/cyucelen/isola/internal/port"
+	"github.com/cyucelen/isola/internal/process"
 	"github.com/cyucelen/isola/internal/state"
 )
+
+func TestOnDemandDashboardActions(t *testing.T) {
+	m := testModel(t, nil)
+	m.cfg = &config.Config{Services: map[string]config.ServiceConfig{
+		"worker": {Command: "sleep 60", OnDemand: true},
+	}}
+	m.trees = []git.Worktree{{Path: t.TempDir(), Branch: "main"}}
+	m.manager = process.NewManager(m.cfg, m.store, port.NewRegistry(m.store, m.cfg))
+	t.Cleanup(func() { m.manager.StopServices(&m.trees[0], "") })
+	msg, ok := m.startAll().(ActionResultMsg)
+	if !ok || msg.IsError || msg.Message != "Started 0 services; 1 on demand" {
+		t.Fatalf("start all: %+v", msg)
+	}
+	status, ok := m.refreshStatus().(StatusUpdateMsg)
+	if !ok || len(status.Rows) != 1 || status.Rows[0].Status != state.StatusOnDemand {
+		t.Fatalf("armed dashboard status: %+v", status)
+	}
+	m.rows = status.Rows
+	msg, ok = m.startSelected().(ActionResultMsg)
+	if !ok || msg.IsError {
+		t.Fatalf("explicit start: %+v", msg)
+	}
+	status, ok = m.refreshStatus().(StatusUpdateMsg)
+	if !ok || status.Rows[0].Status != state.StatusRunning {
+		t.Fatalf("explicit start status: %+v", status)
+	}
+	msg, ok = m.stopSelected().(ActionResultMsg)
+	if !ok || msg.IsError {
+		t.Fatalf("explicit stop: %+v", msg)
+	}
+	status, ok = m.refreshStatus().(StatusUpdateMsg)
+	if !ok || status.Rows[0].Status != state.StatusStopped {
+		t.Fatalf("stop did not disarm: %+v", status)
+	}
+}
 
 // mustModel asserts the tea.Model is *Model, failing the test if not.
 func mustModel(t *testing.T, m tea.Model) *Model {

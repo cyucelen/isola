@@ -222,3 +222,10 @@ func TestDefaultKeyMap(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderOnDemand(t *testing.T) {
+	table := renderTable([]ServiceRow{{Branch: "main", Service: "optional", Status: state.StatusOnDemand}}, 0, 100)
+	if !strings.Contains(table, "○ on-demand") {
+		t.Fatalf("missing on-demand status: %s", table)
+	}
+}

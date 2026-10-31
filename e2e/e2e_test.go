@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +29,7 @@ import (
 	"time"
 
 	"github.com/cyucelen/isola/internal/git"
+	"github.com/cyucelen/isola/internal/process"
 	"github.com/jackc/pgx/v5"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -76,6 +79,9 @@ func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(marker))
 	})
+ http.HandleFunc("/echo", func(w http.ResponseWriter, r *http.Request) {
+  _, _ = io.Copy(w, r.Body)
+ })
 	http.HandleFunc("/call", func(w http.ResponseWriter, r *http.Request) {
 		resp, err := client.Get(os.Getenv("TARGET_URL"))
 		if err != nil {
@@ -208,7 +214,19 @@ func (e *env) newRepo(body string) string {
 	e.git(dir, "commit", "-q", "-m", "init")
 	e.t.Cleanup(func() {
 		_, _ = e.cmd(dir, bin, "down", "--all").CombinedOutput()
+		// `proxy stop` signals asynchronously. Wait for the daemon to finish
+		// writing its state before TempDir cleanup removes its home.
+		var daemon struct {
+			PID int `json:"pid"`
+		}
+		if data, err := os.ReadFile(filepath.Join(e.home, ".isola", "proxy.json")); err == nil {
+			_ = json.Unmarshal(data, &daemon)
+		}
 		_, _ = e.cmd(dir, bin, "proxy", "stop").CombinedOutput()
+		deadline := time.Now().Add(10 * time.Second)
+		for daemon.PID > 0 && process.IsProcessRunning(daemon.PID) && time.Now().Before(deadline) {
+			time.Sleep(20 * time.Millisecond)
+		}
 	})
 	return dir
 }
@@ -842,5 +860,245 @@ MARKER = "${services.web.url}"
 	}
 	if want := fmt.Sprintf("https://%s:4930", host); strings.TrimSpace(got) != want {
 		t.Errorf("injected ${services.web.url} = %q, want %q", strings.TrimSpace(got), want)
+	}
+}
+
+func TestOnDemandLifecycle(t *testing.T) {
+	e := newEnv(t)
+	repo := e.newRepo(fmt.Sprintf(`project = "e2edemand"
+setup = "echo root >> root-runs"
+[services.web]
+command = %q
+setup = "echo setup >> setup-runs; sleep 1"
+on_demand = true
+port_range = { min = 4911, max = 4919 }
+proxy_port = 4910
+`, "sleep 1; exec "+testServer))
+	e.isola(repo, "up")
+	entries := e.ls(repo)
+	if len(entries) != 1 || entries[0].Status != "on-demand" || entries[0].PID != 0 {
+		t.Fatalf("up should defer service: %+v", entries)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "setup-runs")); !os.IsNotExist(err) {
+		t.Fatal("setup should be deferred")
+	}
+	// Concurrent first requests share setup, wait for the listener, and each
+	// receive their own original POST body (no retry/replay).
+	client := &http.Client{Timeout: 10 * time.Second}
+	request := func(body string) error {
+		req, err := http.NewRequest("POST", "http://127.0.0.1:4910/echo", strings.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Host = "main.e2edemand.localhost:4910"
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		got, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode != 200 || string(got) != body {
+			return fmt.Errorf("response %d: %s", resp.StatusCode, got)
+		}
+		return nil
+	}
+	failures := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		go func(i int) { failures <- request(fmt.Sprintf("payload-%d", i)) }(i)
+	}
+	for i := 0; i < 8; i++ {
+		if err := <-failures; err != nil {
+			t.Error(err)
+		}
+	}
+	runs, err := os.ReadFile(filepath.Join(repo, "setup-runs"))
+	if err != nil || string(runs) != "setup\n" {
+		t.Fatalf("setup must run once: %q, %v", runs, err)
+	}
+	roots, _ := os.ReadFile(filepath.Join(repo, "root-runs"))
+	if string(roots) != "root\n" {
+		t.Fatalf("wake reran root setup: %q", roots)
+	}
+	pid := e.ls(repo)[0].PID
+	e.isola(repo, "up")
+	if got := e.ls(repo)[0]; got.PID != pid || got.Status != "running" {
+		t.Fatalf("up disturbed running service: %+v", got)
+	}
+	e.isola(repo, "down")
+	if err := request("stopped"); err == nil {
+		t.Fatal("request restarted explicitly stopped service")
+	}
+	if got := e.ls(repo)[0]; got.Status != "stopped" {
+		t.Fatalf("down did not disarm: %+v", got)
+	}
+	e.isola(repo, "up")
+	if err := request("rearmed"); err != nil {
+		t.Fatal(err)
+	}
+	e.isola(repo, "down")
+	e.isola(repo, "up", "--service", "web")
+	if got := e.ls(repo)[0]; got.Status != "running" {
+		t.Fatalf("explicit start failed: %+v", got)
+	}
+}
+
+func TestOnDemandSetupFailure(t *testing.T) {
+	e := newEnv(t)
+	repo := e.newRepo(fmt.Sprintf(`project = "e2edemandfail"
+[services.web]
+command = %q
+setup = "echo attempt >> attempts; exit 1"
+on_demand = true
+port_range = { min = 4921, max = 4929 }
+proxy_port = 4920
+`, testServer))
+	e.isola(repo, "up")
+	code, _ := e.req(repo, "http", "main.e2edemandfail.localhost", 4920, "/")
+	if code != 503 {
+		t.Fatalf("failed setup response = %d, want 503", code)
+	}
+	e.req(repo, "http", "main.e2edemandfail.localhost", 4920, "/")
+	attempts, _ := os.ReadFile(filepath.Join(repo, "attempts"))
+	if string(attempts) != "attempt\n" {
+		t.Fatalf("failed setup retried automatically: %q", attempts)
+	}
+	if got := e.ls(repo)[0]; got.Status != "stopped" {
+		t.Fatalf("failed service should be stopped: %+v", got)
+	}
+}
+
+func TestOnDemandLinkedWorktreeHTTPS(t *testing.T) {
+	e := newEnv(t)
+	repo := e.newRepo(fmt.Sprintf(`
+[proxy]
+https = true
+auto_trust = false
+[services.web]
+command = %q
+on_demand = true
+port_range = { min = 4901, max = 4909 }
+proxy_port = 4900
+[services.web.env]
+MARKER = "${services.web.url}"
+`, testServer))
+	wt := filepath.Join(t.TempDir(), "feature")
+	e.git(repo, "worktree", "add", "-b", "feature/demand", wt)
+	e.isola(repo, "up", "--all")
+	// Default project identity must resolve from the main worktree, even when
+	// the daemon starts a service in a linked worktree on its first HTTPS request.
+	status, body := e.req(repo, "https", "feature-demand.repo.localhost", 4900, "/")
+	if status != 200 || body != "https://feature-demand.repo.localhost:4900" {
+		t.Fatalf("linked worktree response = %d, %q", status, body)
+	}
+	for _, entry := range e.ls(repo) {
+		if entry.Worktree == "main" && entry.Status != "on-demand" {
+			t.Fatalf("request started wrong worktree: %+v", entry)
+		}
+		if entry.Worktree == "feature/demand" && entry.Status != "running" {
+			t.Fatalf("target worktree not started: %+v", entry)
+		}
+	}
+}
+
+func TestServiceLists(t *testing.T) {
+	e := newEnv(t)
+	repo := e.newRepo(`
+setup = "echo root >> root-runs"
+[proxy]
+enabled = false
+[services.api]
+command = "sleep 60"
+setup = "echo api >> api-runs"
+on_demand = true
+[services.frontend]
+command = "sleep 60"
+on_demand = true
+[services.worker]
+command = "sleep 60"
+`)
+	wt := filepath.Join(t.TempDir(), "feature")
+	e.git(repo, "worktree", "add", "-b", "feature/lists", wt)
+	assertStatus := func(branch, service, want string) {
+		t.Helper()
+		for _, entry := range e.ls(repo) {
+			if entry.Worktree == branch && entry.Service == service {
+				if entry.Status != want {
+					t.Fatalf("%s/%s status = %s, want %s", branch, service, entry.Status, want)
+				}
+				return
+			}
+		}
+		t.Fatalf("missing %s/%s", branch, service)
+	}
+	// Unknown/empty names and stray positional arguments must fail before root
+	// setup or any selected service starts, even when a valid name precedes them.
+	for _, args := range [][]string{
+		{"up", "--service", "api,missing"},
+		{"up", "--service", ""},
+		{"up", "--service", "api,"},
+		{"up", "--service", "api", "frontend"},
+	} {
+		if out, err := e.cmd(repo, bin, args...).CombinedOutput(); err == nil {
+			t.Fatalf("%v unexpectedly succeeded: %s", args, out)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(repo, "root-runs")); !os.IsNotExist(err) {
+		t.Fatal("invalid selection ran root setup")
+	}
+	if e.anyRunning(repo) {
+		t.Fatal("invalid selection partially started services")
+	}
+
+	// A comma-separated list starts exactly these services in every worktree.
+	e.isola(repo, "up", "--all", "--service", "api,frontend")
+	for _, branch := range []string{"main", "feature/lists"} {
+		assertStatus(branch, "api", "running")
+		assertStatus(branch, "frontend", "running")
+		assertStatus(branch, "worker", "stopped")
+	}
+	for _, dir := range []string{repo, wt} {
+		runs, _ := os.ReadFile(filepath.Join(dir, "root-runs"))
+		if string(runs) != "root\n" {
+			t.Fatalf("root setup should run once per worktree: %q", runs)
+		}
+	}
+	// Validate the entire stop selection before stopping a valid earlier name.
+	for _, args := range [][]string{
+		{"down", "--service", "api,missing"},
+		{"down", "--service", ""},
+		{"down", "--service", "api,"},
+		{"down", "--service", "api", "frontend"},
+		{"down", "--prune", "--service", "api"},
+	} {
+		if out, err := e.cmd(repo, bin, args...).CombinedOutput(); err == nil {
+			t.Fatalf("%v unexpectedly succeeded: %s", args, out)
+		}
+		assertStatus("main", "api", "running")
+	}
+	e.isola(repo, "down", "--all", "--service", "api", "--service", "frontend")
+	if e.anyRunning(repo) {
+		t.Fatal("repeated stop flags left selected services running")
+	}
+
+	// Repeated flags combine with comma lists, trim whitespace, and deduplicate.
+	e.isola(repo, "up", "--service", "api", "--service", " frontend,api")
+	assertStatus("main", "api", "running")
+	assertStatus("main", "frontend", "running")
+	assertStatus("main", "worker", "stopped")
+	assertStatus("feature/lists", "api", "stopped")
+	runs, _ := os.ReadFile(filepath.Join(repo, "api-runs"))
+	if string(runs) != "api\napi\n" {
+		t.Fatalf("duplicate selection reran setup: %q", runs)
+	}
+	roots, _ := os.ReadFile(filepath.Join(repo, "root-runs"))
+	if string(roots) != "root\nroot\n" {
+		t.Fatalf("repeated flags reran root setup: %q", roots)
+	}
+	e.isola(repo, "down", "--service", "api,frontend")
+	if e.anyRunning(repo) {
+		t.Fatal("comma-separated stop left selected services running")
 	}
 }

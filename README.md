@@ -175,6 +175,28 @@ until `isola proxy stop`; HTTPS and opting out live under
 If you set up by hand, install the agent skill too so your agents can drive isola
 day to day: `npx skills add cyucelen/isola`.
 
+## On-demand services
+
+For optional monorepo services, add `on_demand = true` to their service block:
+
+```toml
+[services.admin]
+command = "pnpm run dev --port $PORT"
+dir = "apps/admin"
+on_demand = true
+port_range = { min = 9100, max = 9199 }
+proxy_port = 9000
+```
+
+`isola up` leaves it idle with its port and URL reserved. Visiting its proxy URL
+starts it automatically, or run `isola up --service admin` / press `s` in the
+dashboard. Start a group with `isola up --service admin,api,worker` (or repeat
+`--service`); `down` accepts the same selection. `isola down` disarms automatic
+startup until the next `up`. Background
+services can use the same setting and be started explicitly. Services stay
+running once started. See [on-demand services](docs/configuration.md#on-demand-services)
+for setup behavior and proxy requirements.
+
 ## Worktree setup automation
 
 Each worktree's environment needs to be started (`isola up`) and, when the
@@ -288,8 +310,9 @@ case.
 | `isola init`            | Create a `.isola.toml` configuration file                                                    |
 | `isola up`              | Start services for the current worktree                                                      |
 | `isola up --all`        | Start services for all worktrees                                                             |
-| `isola up --service`    | Start a specific service only                                                                |
+| `isola up --service api,web` | Start selected services immediately (also accepts repeated `--service` flags)          |
 | `isola down`            | Stop services for the current worktree                                                       |
+| `isola down --service api,web` | Stop selected services                                                                |
 | `isola down --all`      | Stop services for all worktrees                                                              |
 | `isola down --prune`    | Stop services, then drop deleted worktrees' state and databases                              |
 | `isola destroy`         | Stop the current worktree's services and drop its database (opposite of `up`)                |

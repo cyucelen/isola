@@ -16,8 +16,10 @@ has no `add`/`remove`.
 
 ```bash
 isola init                     # create .isola.toml
-isola up [--all] [--service X] # start services + auto-start the proxy (background)
-isola down [--all] [--service X] [--prune]  # stop services; --prune tears down removed worktrees
+isola up [--all]              # start default services, arm on-demand services, auto-start proxy
+isola up --service X,Y        # start selected services immediately, including on-demand services
+isola down [--all] [--service X,Y]  # stop selected services, or all if omitted
+isola down --prune            # tear down removed worktrees
 isola destroy                  # stop + drop the current worktree's services and databases
 isola ls [--json]              # worktrees, services, ports, status, URLs
 isola dash                     # interactive TUI
@@ -41,11 +43,28 @@ per service under `[services.<name>].env`, referencing `${accessories.<name>.url
 `[".env"]`, a top-level key) are copied from the main worktree into each
 worktree, never overwriting.
 
+## Before using a service
+
+Check `.isola.toml` and `isola ls --json` for the target worktree before running
+service-dependent tests, calling an API, or opening a UI. `on_demand = true`
+means normal `up` leaves the service idle; an `on-demand` status is expected,
+not a failed start. A listed port or URL does not mean it is listening.
+
+When the task needs idle services, run `isola up --service api,frontend` (using
+their configured names) from that worktree, then check their readiness before
+using them. `--service` also accepts repeated flags. Start any other services
+the operation needs too (such as an API or worker), while leaving unrelated
+optional services idle. Prefer this targeted start to changing `on_demand` or
+bringing up every worktree. An armed service can also start on its first proxy
+request, but direct backend URLs and background workers need explicit startup.
+See [references/dev.md](references/dev.md#using-on-demand-services) for the workflow.
+
 ## References
 
 Read the file that matches the task (don't load them all up front):
 
-- **references/dev.md** — day-to-day: worktrees, `up`/`down`/`ls`/`dash`/`proxy`/`logs`.
+- **references/dev.md** — day-to-day: starting needed on-demand services,
+  worktrees, `up`/`down`/`ls`/`dash`/`proxy`/`logs`.
 - **references/configuration.md** — editing an existing `.isola.toml` (add a
   service, wire env, adjust the proxy) and the restart-to-apply rule.
 - **references/accessories.md** — per-worktree Postgres and Redis via `[accessories]` and `isola accessory …`.

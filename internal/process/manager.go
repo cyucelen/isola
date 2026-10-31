@@ -94,11 +94,24 @@ type ServiceResult struct {
 	// AlreadyRunning is true when start was a no-op because the service was
 	// already running (a live PID in state). Not an error, not a fresh start.
 	AlreadyRunning bool
+	// OnDemand means the service is armed but has not been started.
+	OnDemand bool
 }
 
 // StartServices starts services for the given worktree.
-// If serviceFilter is non-empty, only that service is started.
+// Without a filter, on-demand services are armed instead of started.
+// If serviceFilter is non-empty, that service is started immediately.
 func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []ServiceResult {
+	return m.startServices(tree, serviceFilter, false)
+}
+
+// WakeService starts only an armed service, checking under the lifecycle lock
+// so a concurrent explicit stop cannot be undone by an in-flight request.
+func (m *Manager) WakeService(tree *git.Worktree, service string) []ServiceResult {
+	return m.startServices(tree, service, true)
+}
+
+func (m *Manager) startServices(tree *git.Worktree, serviceFilter string, onlyArmed bool) []ServiceResult {
 	var results []ServiceResult
 
 	services := m.targetServices(serviceFilter)
@@ -167,138 +180,186 @@ func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []Serv
 		// A background process has no port: p stays 0 and the availability
 		// check below is skipped.
 
-		// Clean up stale processes (dead PIDs recorded as running).
-		m.cleanStale(tree.Branch, svcName)
+		err := m.store.WithServiceLock(tree.Branch, svcName, func() error {
+			if onlyArmed {
+				st, err := m.store.LoadLocked()
+				if err != nil {
+					return err
+				}
+				ss := state.GetServiceState(st, tree.Branch, svcName)
+				if !liveService(ss) && (ss == nil || ss.Status != state.StatusOnDemand) {
+					return fmt.Errorf("service %s is no longer armed for on-demand startup", svcName)
+				}
+			}
+			// Clean up stale processes (dead PIDs recorded as running).
+			m.cleanStale(tree.Branch, svcName)
 
-		// If the service is already running, starting again is a no-op: report it
-		// as already-up rather than the spurious "port in use" error that a naive
-		// availability check would raise against the service's own process.
-		if pid := m.runningPID(tree.Branch, svcName); pid > 0 {
-			results = append(results, ServiceResult{
-				Branch: tree.Branch, Service: svcName, Port: p, PID: pid, AlreadyRunning: true,
-			})
-			continue
-		}
+			// If the service is already running, starting again is a no-op: report it
+			// as already-up rather than the spurious "port in use" error that a naive
+			// availability check would raise against the service's own process.
+			if pid := m.runningPID(tree.Branch, svcName); pid > 0 {
+				results = append(results, ServiceResult{
+					Branch: tree.Branch, Service: svcName, Port: p, PID: pid, AlreadyRunning: true,
+				})
+				return nil
+			}
 
-		// Check if port is available. If not, the port is held by a foreign
-		// process (an orphan, or something outside isola).
-		if p > 0 && !IsPortAvailable(p) {
-			results = append(results, ServiceResult{
-				Branch: tree.Branch, Service: svcName, Port: p,
-				Err: fmt.Errorf("port %d is already in use (orphan process?)", p),
-			})
-			continue
-		}
+			if serviceFilter == "" && m.cfg.Services[svcName].OnDemand {
+				err := m.store.WithLock(func() error {
+					st, err := m.store.Load()
+					if err != nil {
+						return err
+					}
+					state.SetServiceState(st, tree.Branch, svcName, &state.ServiceState{
+						Port: p, Status: state.StatusOnDemand,
+					})
+					return m.store.Save(st)
+				})
+				results = append(results, ServiceResult{
+					Branch: tree.Branch, Service: svcName, Port: p, OnDemand: true, Err: err,
+				})
+				return nil
+			}
 
-		svc := m.cfg.Services[svcName]
-		command := m.cfg.CommandForBranch(svcName, tree.Branch)
-		env := m.cfg.EnvForBranch(svcName, tree.Branch)
+			if m.cfg.Services[svcName].OnDemand {
+				// Consume the armed state before setup. Failed setup must not be
+				// retried by every browser asset request; `up` can re-arm it.
+				if err := m.store.WithLock(func() error {
+					st, err := m.store.Load()
+					if err != nil {
+						return err
+					}
+					state.SetServiceState(st, tree.Branch, svcName, state.StoppedServiceState(p))
+					return m.store.Save(st)
+				}); err != nil {
+					return err
+				}
+			}
 
-		// A service that reads an accessory's URL must not start when that
-		// accessory is unavailable: ${accessories.<name>.url} would expand to the
-		// empty string and the service would fail deep inside the app (or, worse,
-		// fall back to a shared database), which reads as a broken service rather
-		// than a broken accessory. Services that don't reference it still start.
-		if unmet := m.unmetAccessories(env, acc); len(unmet) > 0 {
-			results = append(results, ServiceResult{
-				Branch: tree.Branch, Service: svcName, Port: p,
-				Err: fmt.Errorf("not started: %s", strings.Join(unmet, "; ")),
-			})
-			continue
-		}
-
-		dir := tree.Path
-		if svc.Dir != "" {
-			dir = filepath.Join(tree.Path, svc.Dir)
-		}
-
-		// Validate the resolved directory stays within the worktree root.
-		cleanDir := filepath.Clean(dir)
-		cleanRoot := filepath.Clean(tree.Path)
-		if cleanDir != cleanRoot && !strings.HasPrefix(cleanDir, cleanRoot+string(filepath.Separator)) {
-			results = append(results, ServiceResult{
-				Branch: tree.Branch, Service: svcName,
-				Err: fmt.Errorf("service directory %q resolves outside worktree root", svc.Dir),
-			})
-			continue
-		}
-
-		// The directory must exist, or `sh -c` fails with a confusing
-		// "fork/exec /bin/sh: no such file or directory" that blames the shell.
-		if info, statErr := os.Stat(cleanDir); statErr != nil || !info.IsDir() {
-			results = append(results, ServiceResult{
-				Branch: tree.Branch, Service: svcName,
-				Err: fmt.Errorf("dir %q does not exist (relative to the worktree root)", svc.Dir),
-			})
-			continue
-		}
-
-		runner := NewRunner(RunnerConfig{
-			ServiceName:          svcName,
-			Branch:               tree.Branch,
-			HostLabel:            hostLabel,
-			Project:              m.cfg.Project,
-			Command:              command,
-			Dir:                  dir,
-			Port:                 p,
-			Env:                  env,
-			AccessoriesByName:    acc,
-			LogDir:               filepath.Join(m.store.Dir(), "logs"),
-			AllServicePorts:      portMap,
-			AllServiceProxyPorts: proxyPorts,
-			ProxyScheme:          proxyScheme,
-			CACertPath:           caCertPath,
-		})
-
-		// Write the service's resolved env into its env file (accessory URLs,
-		// ${...} refs, [env]) so tools that read the file directly, not just the
-		// process environment, see this worktree's isolated values.
-		m.writeEnvFile(tree, svcName, dir, cleanRoot, runner.FileEnv())
-
-		// Run the service's setup (install deps, migrations, ...) before starting
-		// it, so a fresh worktree is prepared. A failed setup blocks only this
-		// service; the others still start.
-		if svc.Setup != "" {
-			logging.Info("→ setup %s: %s", svcName, svc.Setup)
-			if setupErr := runner.RunSetup(svc.Setup); setupErr != nil {
+			// Check if port is available. If not, the port is held by a foreign
+			// process (an orphan, or something outside isola).
+			if p > 0 && !IsPortAvailable(p) {
 				results = append(results, ServiceResult{
 					Branch: tree.Branch, Service: svcName, Port: p,
-					Err: fmt.Errorf("setup failed: %w", setupErr),
+					Err: fmt.Errorf("port %d is already in use (orphan process?)", p),
 				})
-				continue
+				return nil
 			}
-		}
 
-		pid, err := runner.Start()
-		if err == nil {
-			// Don't claim success for a service that dies on startup: wait a
-			// short grace and, if the process is already gone, report a failure
-			// pointing at the logs instead of a false "✓ started".
-			select {
-			case <-runner.Done():
-				err = fmt.Errorf("%s exited immediately; check `isola logs %s`", svcName, tree.Branch)
-			case <-time.After(startGrace):
+			svc := m.cfg.Services[svcName]
+			command := m.cfg.CommandForBranch(svcName, tree.Branch)
+			env := m.cfg.EnvForBranch(svcName, tree.Branch)
+
+			// A service that reads an accessory's URL must not start when that
+			// accessory is unavailable: ${accessories.<name>.url} would expand to the
+			// empty string and the service would fail deep inside the app (or, worse,
+			// fall back to a shared database), which reads as a broken service rather
+			// than a broken accessory. Services that don't reference it still start.
+			if unmet := m.unmetAccessories(env, acc); len(unmet) > 0 {
+				results = append(results, ServiceResult{
+					Branch: tree.Branch, Service: svcName, Port: p,
+					Err: fmt.Errorf("not started: %s", strings.Join(unmet, "; ")),
+				})
+				return nil
 			}
-		}
-		result := ServiceResult{
-			Branch: tree.Branch, Service: svcName, Port: p, PID: pid, Err: err,
-		}
-		results = append(results, result)
 
-		if err == nil {
-			key := tree.Branch + ":" + svcName
-			m.setRunner(key, runner)
+			dir := tree.Path
+			if svc.Dir != "" {
+				dir = filepath.Join(tree.Path, svc.Dir)
+			}
 
-			if err := m.store.WithLock(func() error {
-				st, e := m.store.Load()
-				if e != nil {
-					return e
+			// Validate the resolved directory stays within the worktree root.
+			cleanDir := filepath.Clean(dir)
+			cleanRoot := filepath.Clean(tree.Path)
+			if cleanDir != cleanRoot && !strings.HasPrefix(cleanDir, cleanRoot+string(filepath.Separator)) {
+				results = append(results, ServiceResult{
+					Branch: tree.Branch, Service: svcName,
+					Err: fmt.Errorf("service directory %q resolves outside worktree root", svc.Dir),
+				})
+				return nil
+			}
+
+			// The directory must exist, or `sh -c` fails with a confusing
+			// "fork/exec /bin/sh: no such file or directory" that blames the shell.
+			if info, statErr := os.Stat(cleanDir); statErr != nil || !info.IsDir() {
+				results = append(results, ServiceResult{
+					Branch: tree.Branch, Service: svcName,
+					Err: fmt.Errorf("dir %q does not exist (relative to the worktree root)", svc.Dir),
+				})
+				return nil
+			}
+
+			runner := NewRunner(RunnerConfig{
+				ServiceName:          svcName,
+				Branch:               tree.Branch,
+				HostLabel:            hostLabel,
+				Project:              m.cfg.Project,
+				Command:              command,
+				Dir:                  dir,
+				Port:                 p,
+				Env:                  env,
+				AccessoriesByName:    acc,
+				LogDir:               filepath.Join(m.store.Dir(), "logs"),
+				AllServicePorts:      portMap,
+				AllServiceProxyPorts: proxyPorts,
+				ProxyScheme:          proxyScheme,
+				CACertPath:           caCertPath,
+			})
+
+			// Write the service's resolved env into its env file (accessory URLs,
+			// ${...} refs, [env]) so tools that read the file directly, not just the
+			// process environment, see this worktree's isolated values.
+			m.writeEnvFile(tree, svcName, dir, cleanRoot, runner.FileEnv())
+
+			// Run the service's setup (install deps, migrations, ...) before starting
+			// it, so a fresh worktree is prepared. A failed setup blocks only this
+			// service; the others still start.
+			if svc.Setup != "" {
+				logging.Info("→ setup %s: %s", svcName, svc.Setup)
+				if setupErr := runner.RunSetup(svc.Setup); setupErr != nil {
+					results = append(results, ServiceResult{
+						Branch: tree.Branch, Service: svcName, Port: p,
+						Err: fmt.Errorf("setup failed: %w", setupErr),
+					})
+					return nil
 				}
-				state.SetServiceState(st, tree.Branch, svcName, state.RunningServiceState(p, pid))
-				return m.store.Save(st)
-			}); err != nil {
-				logging.Warn("failed to save state after starting %s/%s: %v", tree.Branch, svcName, err)
 			}
+
+			pid, err := runner.Start()
+			if err == nil {
+				// Don't claim success for a service that dies on startup: wait a
+				// short grace and, if the process is already gone, report a failure
+				// pointing at the logs instead of a false "✓ started".
+				select {
+				case <-runner.Done():
+					err = fmt.Errorf("%s exited immediately; check `isola logs %s`", svcName, tree.Branch)
+				case <-time.After(startGrace):
+				}
+			}
+			result := ServiceResult{
+				Branch: tree.Branch, Service: svcName, Port: p, PID: pid, Err: err,
+			}
+			results = append(results, result)
+
+			if err == nil {
+				key := tree.Branch + ":" + svcName
+				m.setRunner(key, runner)
+
+				if err := m.store.WithLock(func() error {
+					st, e := m.store.Load()
+					if e != nil {
+						return e
+					}
+					state.SetServiceState(st, tree.Branch, svcName, state.RunningServiceState(p, pid))
+					return m.store.Save(st)
+				}); err != nil {
+					logging.Warn("failed to save state after starting %s/%s: %v", tree.Branch, svcName, err)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			results = append(results, ServiceResult{Branch: tree.Branch, Service: svcName, Port: p, Err: err})
 		}
 	}
 
@@ -518,43 +579,50 @@ func (m *Manager) StopServices(tree *git.Worktree, serviceFilter string) []Servi
 		key := tree.Branch + ":" + svcName
 		result := ServiceResult{Branch: tree.Branch, Service: svcName}
 
-		// Try runner first.
-		if runner, ok := m.getRunner(key); ok {
-			result.Err = runner.Stop()
-			m.deleteRunner(key)
-		} else {
-			// Fall back to PID from state.
+		lockErr := m.store.WithServiceLock(tree.Branch, svcName, func() error {
+			// Try runner first.
+			if runner, ok := m.getRunner(key); ok {
+				result.Err = runner.Stop()
+				m.deleteRunner(key)
+			} else {
+				// Fall back to PID from state.
+				if err := m.store.WithLock(func() error {
+					st, e := m.store.Load()
+					if e != nil {
+						return e
+					}
+					ss := state.GetServiceState(st, tree.Branch, svcName)
+					if ss != nil && ss.PID > 0 && IsProcessRunning(ss.PID) {
+						result.PID = ss.PID
+						result.Err = StopPID(ss.PID)
+					}
+					return nil
+				}); err != nil {
+					result.Err = err
+				}
+			}
+
+			// Update state to stopped.
 			if err := m.store.WithLock(func() error {
 				st, e := m.store.Load()
 				if e != nil {
 					return e
 				}
 				ss := state.GetServiceState(st, tree.Branch, svcName)
-				if ss != nil && ss.PID > 0 && IsProcessRunning(ss.PID) {
-					result.PID = ss.PID
-					result.Err = StopPID(ss.PID)
+				portVal := 0
+				if ss != nil {
+					portVal = ss.Port
 				}
-				return nil
+				state.SetServiceState(st, tree.Branch, svcName, state.StoppedServiceState(portVal))
+				return m.store.Save(st)
 			}); err != nil {
-				result.Err = err
+				logging.Warn("failed to update state after stopping %s/%s: %v", tree.Branch, svcName, err)
 			}
-		}
 
-		// Update state to stopped.
-		if err := m.store.WithLock(func() error {
-			st, e := m.store.Load()
-			if e != nil {
-				return e
-			}
-			ss := state.GetServiceState(st, tree.Branch, svcName)
-			portVal := 0
-			if ss != nil {
-				portVal = ss.Port
-			}
-			state.SetServiceState(st, tree.Branch, svcName, state.StoppedServiceState(portVal))
-			return m.store.Save(st)
-		}); err != nil {
-			logging.Warn("failed to update state after stopping %s/%s: %v", tree.Branch, svcName, err)
+			return nil
+		})
+		if lockErr != nil {
+			result.Err = lockErr
 		}
 
 		results = append(results, result)

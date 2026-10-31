@@ -59,11 +59,13 @@ start. Chain steps with `&&`.
 
 ## `[services.<name>]`
 
-Define one or more services. Each worktree will run all defined services.
+Define one or more services. Each worktree starts them on `isola up`, except
+services marked `on_demand = true`.
 
 | Field        | Type         | Required | Description                                                                     |
 | ------------ | ------------ | -------- | ------------------------------------------------------------------------------- |
 | `command`    | string       | yes      | Shell command to start the service                                              |
+| `on_demand`  | bool         | no       | Defer startup until the first proxy request or an explicit start (default `false`) |
 | `setup`      | string       | no       | Command run before `command` on each `up` (deps, migrations); runs in `dir` with the service's env. Make it idempotent; failure blocks the service |
 | `dir`        | string       | no       | Working directory relative to worktree root (default: root)                     |
 | `port_range` | `{min, max}` | no       | Port allocation range. Omit for a background process that doesn't listen (see below) |
@@ -92,6 +94,61 @@ API_URL = "${services.backend.url}"
 command = "pnpm run worker"
 dir = "backend"
 ```
+
+### On-demand services
+
+Keep optional monorepo services idle until you need them:
+
+```toml
+[services.admin]
+command = "pnpm run dev --port $PORT"
+dir = "apps/admin"
+on_demand = true
+port_range = { min = 9100, max = 9199 }
+proxy_port = 9000
+```
+
+`isola up` (including `--all` and worktree hooks) reserves the service's port
+and shows it as `on-demand` in `isola ls` and the dashboard. Its command,
+service setup, and env-file writes wait until it starts. Root setup, file
+copying, and accessory provisioning still happen during `up`.
+
+- **Automatic:** visit its usual proxy URL. The proxy starts the service and
+  waits for its listening port before forwarding the original request.
+  Concurrent requests share one startup. Each request waits up to two minutes;
+  setup continues if the browser disconnects or times out.
+- **Explicit:** run `isola up --service admin`, or select it in `isola dash`
+  and press `s`. Select several with `isola up --service admin,api` or
+  `isola up --service admin --service api`; root setup runs once per worktree.
+  Dashboard `o` can open an armed service's URL to trigger startup.
+- **Stop:** `isola down --service admin` or dashboard `x` stops and disarms it.
+  Further requests do not restart it. Run `isola up` again to re-arm it, or
+  explicitly start it. Plain `down` also disarms every on-demand service.
+
+`up` and `down` both accept comma-separated service lists and repeated `--service`
+flags. The whole list is validated before anything starts or stops; duplicate
+names are handled once. Combine with `--all` to select those services across all
+worktrees. An empty list is an error. `down --prune` cannot be combined with a
+service selection because it tears down removed worktrees as a whole.
+
+Once started, a service stays running until stopped; there is no idle shutdown.
+Repeated `up` leaves already-running services alone. Dashboard `a` follows the
+same startup policy as `up` across worktrees.
+
+Automatic startup requires a running proxy and a `proxy_port`. Direct backend
+URLs and raw port connections do not trigger it. Background and internal
+services can also use `on_demand`, but must be started explicitly. Referencing
+another service's URL or port in env does not start that service.
+
+If service setup fails, later requests do not retry it automatically. Fix the
+failure and run `isola up --service admin` to retry, or `isola up` to re-arm it.
+Service output is in `isola logs`; setup triggered by the proxy is logged to
+`~/.isola/logs/proxy.log`. Request-triggered processes inherit the proxy daemon's
+shell environment; use service `env` entries for project-specific values.
+After upgrading from a version without on-demand support, restart the shared
+proxy with `isola proxy stop` followed by `isola up`.
+
+### Env references
 
 Env values can reference isola-provided sources with `${...}`:
 

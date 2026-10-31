@@ -208,10 +208,18 @@ func (d *Daemon) handler(port int) http.Handler {
 				fmt.Sprintf("No project %q is registered on this machine.\nRun `isola up` in that repo.", project))
 			return
 		}
-		backendPort, err := res.Resolve(slug, port)
+		branch, service, backendPort, err := res.resolveTarget(slug, port)
 		if err != nil {
 			writeProxyError(w, r, http.StatusNotFound, "Worktree not reachable",
 				fmt.Sprintf("No worktree %q in project %q is serving port %d.\nIs it `isola up`?", slug, project, port))
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), onDemandWait)
+		err = res.wake(ctx, branch, service, backendPort)
+		cancel()
+		if err != nil {
+			writeProxyError(w, r, http.StatusServiceUnavailable, "Service could not start",
+				"On-demand startup failed or is still in progress. Check `isola logs` and the proxy log; retry with `isola up --service <name>`.")
 			return
 		}
 		target, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", backendPort))

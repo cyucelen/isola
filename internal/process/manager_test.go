@@ -762,3 +762,129 @@ func TestManagerStopWithoutStart(t *testing.T) {
 		t.Errorf("StopServices error: %v", results[0].Err)
 	}
 }
+
+func TestOnDemandLifecycle(t *testing.T) {
+	mgr, store := managerWithConfig(t, `
+[services.web]
+command = "sleep 60"
+[services.optional]
+command = "sleep 60"
+setup = "echo ready > setup-ran"
+on_demand = true
+port_range = { min = 19400, max = 19499 }
+proxy_port = 9000
+`)
+	tree := &git.Worktree{Path: t.TempDir(), Branch: "main"}
+	t.Cleanup(func() { mgr.StopServices(tree, "") })
+	results := mgr.StartServices(tree, "")
+	if len(results) != 2 {
+		t.Fatalf("results = %+v", results)
+	}
+	for _, r := range results {
+		if r.Err != nil {
+			t.Fatal(r.Err)
+		}
+	}
+	st, _ := store.LoadLocked()
+	ss := state.GetServiceState(st, "main", "optional")
+	if ss == nil || ss.Status != state.StatusOnDemand || ss.PID != 0 || ss.Port == 0 {
+		t.Fatalf("optional should be armed with a port but no process: %+v", ss)
+	}
+	if !state.GetServiceState(st, "main", "web").IsRunning() {
+		t.Fatal("default service not started")
+	}
+	if _, err := os.Stat(filepath.Join(tree.Path, "setup-ran")); !os.IsNotExist(err) {
+		t.Fatal("deferred setup ran")
+	}
+	reserved := ss.Port
+	results = mgr.StartServices(tree, "optional")
+	if len(results) != 1 || results[0].Err != nil || results[0].PID == 0 || results[0].Port != reserved {
+		t.Fatalf("explicit start = %+v", results)
+	}
+	pid := results[0].PID
+	if _, err := os.Stat(filepath.Join(tree.Path, "setup-ran")); err != nil {
+		t.Fatal("explicit start did not run setup", err)
+	}
+	for _, r := range mgr.StartServices(tree, "") {
+		if r.Service == "optional" && (!r.AlreadyRunning || r.PID != pid) {
+			t.Fatalf("up disturbed running optional service: %+v", r)
+		}
+	}
+	mgr.StopServices(tree, "")
+	st, _ = store.LoadLocked()
+	if ss := state.GetServiceState(st, "main", "optional"); ss.Status != state.StatusStopped {
+		t.Fatalf("down did not disarm: %+v", ss)
+	}
+	results = mgr.WakeService(tree, "optional")
+	if len(results) != 1 || results[0].Err == nil {
+		t.Fatalf("request undid down: %+v", results)
+	}
+	mgr.StartServices(tree, "")
+	results = mgr.WakeService(tree, "optional")
+	if len(results) != 1 || results[0].Err != nil || results[0].PID == 0 {
+		t.Fatalf("wake after rearming: %+v", results)
+	}
+}
+
+func TestOnDemandBackgroundService(t *testing.T) {
+	mgr, store := managerWithConfig(t, `
+[services.worker]
+command = "sleep 60"
+on_demand = true
+`)
+	tree := &git.Worktree{Path: t.TempDir(), Branch: "main"}
+	t.Cleanup(func() { mgr.StopServices(tree, "") })
+	results := mgr.StartServices(tree, "")
+	if len(results) != 1 || results[0].Err != nil || !results[0].OnDemand {
+		t.Fatalf("arm worker: %+v", results)
+	}
+	st, _ := store.LoadLocked()
+	if len(st.PortAssignments) != 0 {
+		t.Fatal("background service allocated a port")
+	}
+	results = mgr.StartServices(tree, "worker")
+	if len(results) != 1 || results[0].Err != nil || results[0].PID == 0 {
+		t.Fatalf("explicit worker start: %+v", results)
+	}
+}
+
+func TestDownDuringOnDemandStartup(t *testing.T) {
+	mgr, store := managerWithConfig(t, `
+[services.worker]
+command = "sleep 60"
+setup = "touch starting; sleep 1"
+on_demand = true
+`)
+	tree := &git.Worktree{Path: t.TempDir(), Branch: "main"}
+	t.Cleanup(func() { mgr.StopServices(tree, "") })
+	mgr.StartServices(tree, "")
+	// A separate manager models the daemon racing a CLI stop.
+	daemon := NewManager(mgr.cfg, store, port.NewRegistry(store, mgr.cfg))
+	done := make(chan []ServiceResult, 1)
+	go func() { done <- daemon.WakeService(tree, "worker") }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(filepath.Join(tree.Path, "starting")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("setup never started")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	results := mgr.StopServices(tree, "worker")
+	if len(results) != 1 || results[0].Err != nil {
+		t.Fatalf("stop: %+v", results)
+	}
+	started := <-done
+	if len(started) != 1 || started[0].Err != nil {
+		t.Fatalf("startup: %+v", started)
+	}
+	if IsProcessRunning(started[0].PID) {
+		t.Fatal("service survived concurrent down")
+	}
+	st, _ := store.LoadLocked()
+	if ss := state.GetServiceState(st, "main", "worker"); ss.Status != state.StatusStopped {
+		t.Fatalf("state after down: %+v", ss)
+	}
+}

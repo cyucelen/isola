@@ -21,23 +21,72 @@ isola ls --json      # machine-readable
 Run these from inside a worktree (or target all worktrees with `--all`):
 
 ```bash
-isola up                     # start all services for the current worktree
-isola up --service frontend  # just one service
-isola up --all               # start every worktree's services
+isola up                     # start defaults; arm on-demand services for this worktree
+isola up --service frontend  # start this service now, even if on-demand
+isola up --service api,frontend  # start a selected list immediately
+isola up --all               # apply the same startup policy to every worktree
 
 isola down                    # stop the current worktree's services
 isola down --service frontend # stop just one service
+isola down --service api,frontend # stop a selected list
 isola down --all              # stop everything
 isola destroy                 # stop the current worktree AND drop its per-worktree databases
 ```
 
-Services are detached and keep running after the command returns; use `isola down`
-to stop them. There is no `restart` verb — run `isola down` then `isola up`.
+Both commands accept comma-separated names or repeated flags:
+`isola up --service api --service frontend`. They validate the entire list before
+acting and handle duplicate names once. Root setup runs once per worktree per
+`up`, even with multiple services. Combine with `--all` to apply the selection
+across worktrees; omit `--all` to affect only the current worktree. Names are
+flag values, not positional arguments; `--service api frontend` is invalid.
+
+Started services are detached and keep running after the command returns; use
+`isola down` to stop them. There is no `restart` verb. To restart a particular
+service immediately, run `isola down --service <name>` then
+`isola up --service <name>`; plain `up` only re-arms an on-demand service.
+
+## Using on-demand services
+
+Before an operation that depends on running services, identify the services it
+uses from `.isola.toml` and the relevant app/test configuration, then inspect
+`isola ls --json`. Match entries to the target worktree; the same service may be
+running in another worktree. `on-demand` means armed but idle, `running` means a
+process was started, and `stopped` is not armed for automatic startup.
+
+Start the services needed for the task explicitly from that worktree. For
+example, before a UI test that calls an optional API:
+
+```bash
+isola ls --json
+isola up --service api,frontend
+isola ls --json
+# Check the API/frontend health or expected response, then run the UI test.
+```
+
+`up --service` also works for background workers and is a no-op for an already
+running service. A running PID alone does not establish application readiness;
+use the service's health endpoint, expected response, or startup logs before
+starting dependent work. If startup fails, inspect `isola logs -s <name>` and
+the setup error before retrying. Keep unrelated optional services idle; do not
+remove `on_demand = true` just to use a service for the current task.
+
+For an armed web service, visiting its proxy URL starts it and waits for its
+listening port. Direct URLs (`direct_url` / `127.0.0.1:<port>`) bypass the proxy
+and cannot trigger startup. Env references to a service do not start it either.
+Explicitly start optional API/worker dependencies before operations that use
+them directly. Background and internal services without a `proxy_port` always
+need an explicit start.
+
+`down --service <name>` disarms automatic startup, so subsequent requests leave
+it stopped. Use `up --service <name>` when it is needed again, or plain `up` to
+re-arm it. Once started, services have no automatic idle shutdown. Service
+setup is deferred until startup; root setup and accessories still run on `up`.
 
 ## Reach services in the browser
 
 `isola up` registers this project and ensures the single machine-wide proxy is
-running, so services are reachable immediately at
+running. Started services are reachable, and armed on-demand services start on
+their first request, at
 `http://<branch-slug>.<project>.localhost:<proxy_port>`. For project `myapp`,
 branch `feature/auth`, `proxy_port = 3000`, the frontend is at
 `http://feature-auth.myapp.localhost:3000`. URLs are always project-qualified;
