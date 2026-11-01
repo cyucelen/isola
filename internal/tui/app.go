@@ -255,6 +255,8 @@ func (m *Model) refreshStatus() tea.Msg {
 					row.Status = state.StatusRunning
 				case ss.Status == state.StatusOnDemand:
 					row.Status = state.StatusOnDemand
+				case ss.Status == state.StatusStarting:
+					row.Status = state.StatusStarting
 				default:
 					row.Status = state.StatusStopped
 				}
@@ -340,7 +342,7 @@ func (m *Model) openSelected() tea.Msg {
 		return ActionResultMsg{Message: "No service selected"}
 	}
 
-	if row.Status != state.StatusRunning && row.Status != state.StatusOnDemand {
+	if row.Status != state.StatusRunning && row.Status != state.StatusOnDemand && row.Status != state.StatusStarting {
 		return ActionResultMsg{Message: fmt.Sprintf("%s/%s is not running, start it first", row.Branch, row.Service), IsError: true}
 	}
 

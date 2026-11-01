@@ -115,6 +115,10 @@ func (m *Manager) startServices(tree *git.Worktree, serviceFilter string, onlyAr
 	var results []ServiceResult
 
 	services := m.targetServices(serviceFilter)
+	initial, err := m.store.LoadLocked()
+	if err != nil {
+		return []ServiceResult{{Branch: tree.Branch, Err: err}}
+	}
 	starting := make(map[string]bool, len(services))
 	for _, svcName := range services {
 		starting[svcName] = true
@@ -180,7 +184,12 @@ func (m *Manager) startServices(tree *git.Worktree, serviceFilter string, onlyAr
 		// A background process has no port: p stays 0 and the availability
 		// check below is skipped.
 
+		direct := m.cfg.Services[svcName].OnDemand && m.cfg.AutoProxyEnabled() && p > 0
 		err := m.store.WithServiceLock(tree.Branch, svcName, func() error {
+			version := stopVersion(initial, tree.Branch, svcName)
+			if err := m.checkStart(tree.Branch, svcName, version); err != nil {
+				return err
+			}
 			if onlyArmed {
 				st, err := m.store.LoadLocked()
 				if err != nil {
@@ -211,37 +220,12 @@ func (m *Manager) startServices(tree *git.Worktree, serviceFilter string, onlyAr
 						return err
 					}
 					state.SetServiceState(st, tree.Branch, svcName, &state.ServiceState{
-						Port: p, Status: state.StatusOnDemand,
+						Port: p, Status: state.StatusOnDemand, Direct: direct,
 					})
 					return m.store.Save(st)
 				})
 				results = append(results, ServiceResult{
 					Branch: tree.Branch, Service: svcName, Port: p, OnDemand: true, Err: err,
-				})
-				return nil
-			}
-
-			if m.cfg.Services[svcName].OnDemand {
-				// Consume the armed state before setup. Failed setup must not be
-				// retried by every browser asset request; `up` can re-arm it.
-				if err := m.store.WithLock(func() error {
-					st, err := m.store.Load()
-					if err != nil {
-						return err
-					}
-					state.SetServiceState(st, tree.Branch, svcName, state.StoppedServiceState(p))
-					return m.store.Save(st)
-				}); err != nil {
-					return err
-				}
-			}
-
-			// Check if port is available. If not, the port is held by a foreign
-			// process (an orphan, or something outside isola).
-			if p > 0 && !IsPortAvailable(p) {
-				results = append(results, ServiceResult{
-					Branch: tree.Branch, Service: svcName, Port: p,
-					Err: fmt.Errorf("port %d is already in use (orphan process?)", p),
 				})
 				return nil
 			}
@@ -289,6 +273,27 @@ func (m *Manager) startServices(tree *git.Worktree, serviceFilter string, onlyAr
 				return nil
 			}
 
+			backend, err := m.prepareStart(tree.Branch, svcName, p, direct, version)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				_ = m.store.WithLock(func() error {
+					st, err := m.store.Load()
+					if err != nil {
+						return err
+					}
+					if ss := state.GetServiceState(st, tree.Branch, svcName); ss != nil && ss.Status == state.StatusStarting {
+						state.SetServiceState(st, tree.Branch, svcName, state.StoppedServiceState(p))
+						return m.store.Save(st)
+					}
+					return nil
+				})
+			}()
+			if backend > 0 && !IsPortAvailable(backend) {
+				return fmt.Errorf("port %d is already in use (orphan process?)", backend)
+			}
+
 			runner := NewRunner(RunnerConfig{
 				ServiceName:          svcName,
 				Branch:               tree.Branch,
@@ -296,7 +301,7 @@ func (m *Manager) startServices(tree *git.Worktree, serviceFilter string, onlyAr
 				Project:              m.cfg.Project,
 				Command:              command,
 				Dir:                  dir,
-				Port:                 p,
+				Port:                 backend,
 				Env:                  env,
 				AccessoriesByName:    acc,
 				LogDir:               filepath.Join(m.store.Dir(), "logs"),
@@ -316,7 +321,10 @@ func (m *Manager) startServices(tree *git.Worktree, serviceFilter string, onlyAr
 			// service; the others still start.
 			if svc.Setup != "" {
 				logging.Info("→ setup %s: %s", svcName, svc.Setup)
-				if setupErr := runner.RunSetup(svc.Setup); setupErr != nil {
+				setupCtx, cancelSetup := m.startContext(tree.Branch, svcName, version)
+				setupErr := runner.RunSetupContext(setupCtx, svc.Setup)
+				cancelSetup()
+				if setupErr != nil {
 					results = append(results, ServiceResult{
 						Branch: tree.Branch, Service: svcName, Port: p,
 						Err: fmt.Errorf("setup failed: %w", setupErr),
@@ -325,6 +333,9 @@ func (m *Manager) startServices(tree *git.Worktree, serviceFilter string, onlyAr
 				}
 			}
 
+			if err := m.checkStart(tree.Branch, svcName, version); err != nil {
+				return err
+			}
 			pid, err := runner.Start()
 			if err == nil {
 				// Don't claim success for a service that dies on startup: wait a
@@ -350,7 +361,12 @@ func (m *Manager) startServices(tree *git.Worktree, serviceFilter string, onlyAr
 					if e != nil {
 						return e
 					}
-					state.SetServiceState(st, tree.Branch, svcName, state.RunningServiceState(p, pid))
+					ss := state.RunningServiceState(p, pid)
+					ss.Direct = direct
+					if direct {
+						ss.BackendPort = backend
+					}
+					state.SetServiceState(st, tree.Branch, svcName, ss)
 					return m.store.Save(st)
 				}); err != nil {
 					logging.Warn("failed to save state after starting %s/%s: %v", tree.Branch, svcName, err)
@@ -579,6 +595,11 @@ func (m *Manager) StopServices(tree *git.Worktree, serviceFilter string) []Servi
 		key := tree.Branch + ":" + svcName
 		result := ServiceResult{Branch: tree.Branch, Service: svcName}
 
+		if err := m.requestStop(tree.Branch, svcName); err != nil {
+			result.Err = err
+			results = append(results, result)
+			continue
+		}
 		lockErr := m.store.WithServiceLock(tree.Branch, svcName, func() error {
 			// Try runner first.
 			if runner, ok := m.getRunner(key); ok {
@@ -616,7 +637,7 @@ func (m *Manager) StopServices(tree *git.Worktree, serviceFilter string) []Servi
 				state.SetServiceState(st, tree.Branch, svcName, state.StoppedServiceState(portVal))
 				return m.store.Save(st)
 			}); err != nil {
-				logging.Warn("failed to update state after stopping %s/%s: %v", tree.Branch, svcName, err)
+				return err
 			}
 
 			return nil

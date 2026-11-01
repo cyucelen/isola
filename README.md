@@ -189,11 +189,13 @@ proxy_port = 9000
 ```
 
 `isola up` leaves it idle with its port and URL reserved. Visiting its proxy URL
+or direct URL (`localhost:<port>`)
 starts it automatically, or run `isola up --service admin` / press `s` in the
 dashboard. Start a group with `isola up --service admin,api,worker` (or repeat
 `--service`); `down` accepts the same selection. `isola down` disarms automatic
-startup until the next `up`. Background
-services can use the same setting and be started explicitly. Services stay
+startup until the next `up`, and cancels pending service setup. Internal services
+with a port also wake on direct requests; background services without a port
+are started explicitly. Direct wake-up requires the shared daemon. Services stay
 running once started. See [on-demand services](docs/configuration.md#on-demand-services)
 for setup behavior and proxy requirements.
 
@@ -423,6 +425,9 @@ routing, and HTTPS.
 Yes. `isola up` starts your services on their allocated ports; reach them
 directly at `localhost:<port>`. The proxy (and its `*.localhost` routing) is
 optional; disable auto-start with `[proxy] enabled = false`.
+
+With that setting, start on-demand services explicitly using `up --service`.
+Automatic wake-up on direct URLs requires the shared daemon.
 
 ### Where does isola keep its files?
 

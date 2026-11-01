@@ -74,6 +74,8 @@ func renderTable(rows []ServiceRow, cursor int, termWidth int) string {
 			statusStr = statusRunning
 		case state.StatusOnDemand:
 			statusStr = "○ on-demand"
+		case state.StatusStarting:
+			statusStr = "◌ starting"
 		}
 
 		pidStr := "—"

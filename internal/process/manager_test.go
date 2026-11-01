@@ -852,7 +852,7 @@ func TestDownDuringOnDemandStartup(t *testing.T) {
 	mgr, store := managerWithConfig(t, `
 [services.worker]
 command = "sleep 60"
-setup = "touch starting; sleep 1"
+setup = "touch starting; while [ ! -f release ]; do sleep 0.1; done; touch setup-finished"
 on_demand = true
 `)
 	tree := &git.Worktree{Path: t.TempDir(), Branch: "main"}
@@ -872,17 +872,31 @@ on_demand = true
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	results := mgr.StopServices(tree, "worker")
-	if len(results) != 1 || results[0].Err != nil {
-		t.Fatalf("stop: %+v", results)
+	stopped := make(chan []ServiceResult, 1)
+	go func() { stopped <- mgr.StopServices(tree, "worker") }()
+	select {
+	case results := <-stopped:
+		if len(results) != 1 || results[0].Err != nil {
+			t.Fatalf("stop: %+v", results)
+		}
+	case <-time.After(2 * time.Second):
+		// Release the old implementation's blocked setup before failing.
+		_ = os.WriteFile(filepath.Join(tree.Path, "release"), nil, 0600)
+		<-stopped
+		<-done
+		t.Fatal("down waited for unbounded setup instead of canceling it")
 	}
 	started := <-done
-	if len(started) != 1 || started[0].Err != nil {
-		t.Fatalf("startup: %+v", started)
+	if len(started) != 1 || started[0].Err == nil {
+		t.Fatalf("startup should be canceled: %+v", started)
 	}
-	if IsProcessRunning(started[0].PID) {
-		t.Fatal("service survived concurrent down")
+	if started[0].PID != 0 {
+		t.Fatal("canceled setup launched the service")
 	}
+	if _, err := os.Stat(filepath.Join(tree.Path, "setup-finished")); !os.IsNotExist(err) {
+		t.Fatal("setup continued after down")
+	}
+
 	st, _ := store.LoadLocked()
 	if ss := state.GetServiceState(st, "main", "worker"); ss.Status != state.StatusStopped {
 		t.Fatalf("state after down: %+v", ss)

@@ -152,9 +152,24 @@ var upCmd = &cobra.Command{
 		// daemon is running (unless disabled), so services are reachable at
 		// <branch>.<project>.localhost without a separate command.
 		if cfg.AutoProxyEnabled() {
+			directRequired := false
+			st, err := store.LoadLocked()
+			if err != nil {
+				return fmt.Errorf("checking direct listeners: %w", err)
+			}
+			for _, tree := range trees {
+				for _, ss := range st.Services[tree.Branch] {
+					if ss != nil && ss.Direct {
+						directRequired = true
+					}
+				}
+			}
 			reg, err := registry.Open()
 			if err != nil {
 				logging.Warn("proxy registry unavailable: %v", err)
+				if directRequired {
+					totalFailed++
+				}
 			} else {
 				// Capture the project's previous registration before overwriting
 				// it, so we can tell whether the proxy scheme or ports changed.
@@ -166,6 +181,9 @@ var upCmd = &cobra.Command{
 					HTTPS:      cfg.Proxy.HTTPS,
 				}); regErr != nil {
 					logging.Warn("registering project with proxy: %v", regErr)
+					if directRequired {
+						totalFailed++
+					}
 				} else {
 					started, derr := proxy.EnsureDaemon(reg)
 					switch {
@@ -182,6 +200,17 @@ var upCmd = &cobra.Command{
 							logging.Warn("proxy config changed but the shared proxy is already running with the old settings; restart it with `isola proxy stop` then `isola up` to apply.")
 						}
 						warnStaleProxyBuild(reg)
+					}
+
+					branches := make([]string, 0, len(trees))
+					for _, tree := range trees {
+						if !tree.IsBare {
+							branches = append(branches, tree.Branch)
+						}
+					}
+					if err := proxy.WaitDirectListeners(reg, store, branches); err != nil {
+						logging.Error("%v", err)
+						totalFailed++
 					}
 
 					// Only advertise reachability when something is actually up;

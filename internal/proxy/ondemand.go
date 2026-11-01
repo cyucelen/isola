@@ -37,6 +37,11 @@ func (r *Resolver) wake(ctx context.Context, branch, service string, backend int
 			return err
 		}
 		ss := state.GetServiceState(st, branch, service)
+		if ss != nil && ss.Status == state.StatusStarting {
+			r.mu.Unlock()
+			_, err := r.readyBackend(ctx, branch, service)
+			return err
+		}
 		if ss == nil || ss.Status != state.StatusOnDemand {
 			r.mu.Unlock()
 			return nil
@@ -104,7 +109,8 @@ func (r *Resolver) startOnDemand(branch, service string, backend int) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), onDemandWait)
 	defer cancel()
-	return waitForBackend(ctx, backend, results[0].PID)
+	_, err = r.readyBackend(ctx, branch, service)
+	return err
 }
 
 func waitForBackend(ctx context.Context, backend, pid int) error {
@@ -122,6 +128,55 @@ func waitForBackend(ctx context.Context, backend, pid int) error {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("waiting for service to listen: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// childPort returns the live child address, never the daemon's public listener.
+func (r *Resolver) childPort(branch, service string) (int, bool, error) {
+	st, err := r.store.LoadLocked()
+	if err != nil {
+		return 0, false, err
+	}
+	ss := state.GetServiceState(st, branch, service)
+	if ss == nil {
+		return 0, false, fmt.Errorf("service has no runtime state")
+	}
+	if ss.Direct {
+		return ss.BackendPort, true, nil
+	}
+	return ss.Port, false, nil
+}
+
+func (r *Resolver) readyBackend(ctx context.Context, branch, service string) (int, error) {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		st, err := r.store.LoadLocked()
+		if err != nil {
+			return 0, err
+		}
+		ss := state.GetServiceState(st, branch, service)
+		if ss == nil || (ss.Status != state.StatusStarting && !ss.IsRunning()) {
+			return 0, fmt.Errorf("service is stopped")
+		}
+		if ss.IsRunning() {
+			backend := ss.Port
+			if ss.Direct {
+				backend = ss.BackendPort
+			}
+			if backend <= 0 || (ss.Direct && backend == ss.Port) {
+				return 0, fmt.Errorf("invalid backend port")
+			}
+			if err := waitForBackend(ctx, backend, ss.PID); err != nil {
+				return 0, err
+			}
+			return backend, nil
+		}
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
 		case <-ticker.C:
 		}
 	}

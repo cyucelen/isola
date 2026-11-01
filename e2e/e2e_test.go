@@ -15,10 +15,14 @@
 package e2e
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -81,6 +85,17 @@ func main() {
 	})
  http.HandleFunc("/echo", func(w http.ResponseWriter, r *http.Request) {
   _, _ = io.Copy(w, r.Body)
+ })
+ http.HandleFunc("/ports", func(w http.ResponseWriter, r *http.Request) {
+  _, _ = w.Write([]byte(os.Getenv("PORT")+","+os.Getenv("ISOLA_WEB_PORT")))
+ })
+ http.HandleFunc("/upgrade", func(w http.ResponseWriter, r *http.Request) {
+  conn, rw, err := w.(http.Hijacker).Hijack()
+  if err != nil { return }
+  defer conn.Close()
+  rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n")
+  rw.Flush()
+  io.Copy(conn, rw)
  })
 	http.HandleFunc("/call", func(w http.ResponseWriter, r *http.Request) {
 		resp, err := client.Get(os.Getenv("TARGET_URL"))
@@ -1100,5 +1115,269 @@ command = "sleep 60"
 	e.isola(repo, "down", "--service", "api,frontend")
 	if e.anyRunning(repo) {
 		t.Fatal("comma-separated stop left selected services running")
+	}
+}
+
+func TestOnDemandDirectPorts(t *testing.T) {
+	e := newEnv(t)
+	repo := e.newRepo(fmt.Sprintf(`project = "e2edirectdemand"
+[services.web]
+command = %q
+setup = "echo setup >> web-starts; sleep 0.2"
+on_demand = true
+port_range = { min = 4851, max = 4854 }
+proxy_port = 4850
+[services.web.env]
+TARGET_URL = "${services.api.direct_url}"
+[services.api]
+command = %q
+on_demand = true
+port_range = { min = 4855, max = 4859 }
+[services.api.env]
+MARKER = "lazy-api"
+`, testServer, testServer))
+	e.isola(repo, "up")
+	ports := map[string]int{}
+	for _, entry := range e.ls(repo) {
+		if entry.Status != "on-demand" || entry.PID != 0 {
+			t.Fatalf("expected idle service: %+v", entry)
+		}
+		ports[entry.Service] = entry.Port
+	}
+	webPort := ports["web"]
+	// TCP availability probes must not wake an idle service.
+	probe, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", webPort))
+	if err != nil {
+		t.Fatal("direct listener was not ready when up returned", err)
+	}
+	_ = probe.Close()
+	for _, entry := range e.ls(repo) {
+		if entry.Status != "on-demand" {
+			t.Fatalf("port probe woke service: %+v", entry)
+		}
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	request := func(addr, host, path, body string) (int, string, error) {
+		req, err := http.NewRequest("POST", "http://"+addr+path, strings.NewReader(body))
+		if err != nil {
+			return 0, "", err
+		}
+		if host != "" {
+			req.Host = host
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return 0, "", err
+		}
+		defer resp.Body.Close()
+		data, err := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(data), err
+	}
+	// Direct and qualified requests share the same startup and preserve POSTs.
+	done := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		go func(i int) {
+			addr := fmt.Sprintf("127.0.0.1:%d", webPort)
+			host := ""
+			if i%2 == 0 {
+				addr = "127.0.0.1:4850"
+				host = "main.e2edirectdemand.localhost:4850"
+			}
+			payload := fmt.Sprintf("request-%d", i)
+			code, body, err := request(addr, host, "/echo", payload)
+			if err == nil && (code != 200 || body != payload) {
+				err = fmt.Errorf("response %d %q", code, body)
+			}
+			done <- err
+		}(i)
+	}
+	for i := 0; i < 8; i++ {
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}
+	starts, _ := os.ReadFile(filepath.Join(repo, "web-starts"))
+	if string(starts) != "setup\n" {
+		t.Fatalf("duplicate startup: %q", starts)
+	}
+	addr := fmt.Sprintf("127.0.0.1:%d", webPort)
+	code, body, err := request(addr, "", "/ports", "")
+	if err != nil || code != 200 {
+		t.Fatalf("ports response: %d %q %v", code, body, err)
+	}
+	parts := strings.Split(body, ",")
+	if len(parts) != 2 || parts[0] == parts[1] || parts[1] != strconv.Itoa(webPort) {
+		t.Fatalf("child/public port distinction: %q", body)
+	}
+	// A sibling's direct_url wakes an internal service with no proxy_port.
+	code, body, err = request(addr, "", "/call", "")
+	if err != nil || code != 200 || body != "via:lazy-api" {
+		t.Fatalf("lazy sibling: %d %q %v", code, body, err)
+	}
+	if v6, err := net.Listen("tcp6", "[::1]:0"); err == nil {
+		_ = v6.Close()
+		code, body, err = request(fmt.Sprintf("[::1]:%d", webPort), "", "/echo", "ipv6")
+		if err != nil || code != 200 || body != "ipv6" {
+			t.Fatalf("IPv6 direct request: %d %q %v", code, body, err)
+		}
+	}
+	// The direct relay preserves upgraded bidirectional streams (WebSocket/HMR).
+	stream, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stream.Close() }()
+	_ = stream.SetDeadline(time.Now().Add(5 * time.Second))
+	_, err = fmt.Fprintf(stream, "GET /upgrade HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(stream)
+	response, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != 101 {
+		t.Fatalf("upgrade status %d", response.StatusCode)
+	}
+	if _, err := stream.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 5)
+	if _, err := io.ReadFull(reader, buf); err != nil || string(buf) != "hello" {
+		t.Fatalf("upgraded echo: %q %v", buf, err)
+	}
+	_ = stream.Close()
+
+	e.isola(repo, "down", "--service", "web")
+	code, _, err = request(addr, "", "/echo", "stopped")
+	if err == nil && code == 200 {
+		t.Fatal("direct request undid down")
+	}
+	e.isola(repo, "up")
+	code, body, err = request(addr, "", "/echo", "rearmed")
+	if err != nil || code != 200 || body != "rearmed" {
+		t.Fatalf("rearmed direct request: %d %q %v", code, body, err)
+	}
+	e.isola(repo, "down", "--service", "web")
+	e.isola(repo, "up", "--service", "web")
+	code, body, err = request(addr, "", "/echo", "explicit")
+	if err != nil || code != 200 || body != "explicit" {
+		t.Fatalf("explicit direct start: %d %q %v", code, body, err)
+	}
+	// Restart the daemon while the children remain alive; public URLs stay stable.
+	data, err := os.ReadFile(filepath.Join(e.home, ".isola", "proxy.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var daemon struct {
+		PID int `json:"pid"`
+	}
+	if err := json.Unmarshal(data, &daemon); err != nil {
+		t.Fatal(err)
+	}
+	e.isola(repo, "proxy", "stop")
+	deadline := time.Now().Add(6 * time.Second)
+	for process.IsProcessRunning(daemon.PID) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if process.IsProcessRunning(daemon.PID) {
+		t.Fatal("proxy did not stop")
+	}
+	e.isola(repo, "up")
+	code, body, err = request(addr, "", "/echo", "new-daemon")
+	if err != nil || code != 200 || body != "new-daemon" {
+		t.Fatalf("daemon restart: %d %q %v", code, body, err)
+	}
+	e.isola(repo, "down", "--all")
+	deadline = time.Now().Add(3 * time.Second)
+	for {
+		ln, err := net.Listen("tcp4", addr)
+		if err == nil {
+			_ = ln.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("direct listener not released after down --all", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+}
+
+func TestDownCancelsServiceSetup(t *testing.T) {
+	e := newEnv(t)
+	repo := e.newRepo(`
+[proxy]
+enabled = false
+[services.worker]
+on_demand = true
+setup = "touch starting; sleep 123; touch setup-finished"
+command = "touch launched; sleep 60"
+`)
+	start := e.cmd(repo, bin, "up", "--service", "worker")
+	var output bytes.Buffer
+	start.Stdout = &output
+	start.Stderr = &output
+	if err := start.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- start.Wait() }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(filepath.Join(repo, "starting")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("setup did not start")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	before := time.Now()
+	e.isola(repo, "down", "--service", "worker")
+	if time.Since(before) > 5*time.Second {
+		t.Error("down waited for long setup")
+	}
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatalf("canceled start succeeded: %s", output.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("setup was not canceled")
+	}
+	for _, file := range []string{"launched", "setup-finished"} {
+		if _, err := os.Stat(filepath.Join(repo, file)); !os.IsNotExist(err) {
+			t.Fatalf("%s exists after stop", file)
+		}
+	}
+	if e.anyRunning(repo) {
+		t.Fatal("service running after canceled setup")
+	}
+}
+
+func TestDownReturnsLifecycleErrors(t *testing.T) {
+	e := newEnv(t)
+	repo := e.newRepo(`[proxy]
+enabled = false
+[services.worker]
+command = "sleep 60"
+`)
+	e.isola(repo, "up")
+	key := sha256.Sum256([]byte("main:worker"))
+	lock := filepath.Join(repo, ".isola", fmt.Sprintf("service-%x.lock", key))
+	if err := os.Remove(lock); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(lock, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(lock) })
+	out, err := e.cmd(repo, bin, "down", "--service", "worker").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "failed to stop") {
+		t.Fatalf("down hid lifecycle error: %v %s", err, out)
 	}
 }

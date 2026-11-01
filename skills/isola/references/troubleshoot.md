@@ -24,8 +24,9 @@ Each line is one check; a ✗ points at the fix:
 
 Check `isola ls --json` for the target worktree. `on-demand` is intentionally
 idle, not a crash. If the task needs it, run `isola up --service <name>` there
-and verify readiness. A direct backend request does not trigger startup; only
-the proxy can wake an armed service. `stopped` services need an explicit start
+and verify readiness. Both proxy URLs and listed direct URLs can wake an armed
+service while the daemon runs. With `[proxy].enabled = false`, direct wake-up is
+disabled. Bare TCP probes do not wake services; send an actual request. `stopped` services need an explicit start
 or another `up` to re-arm them after `down`.
 
 A proxy **503 "Service could not start"** means startup failed or the request

@@ -1,6 +1,7 @@
 package process
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -114,7 +115,15 @@ func (r *Runner) Start() (int, error) {
 // inherited so install/migration progress is visible. Returns the command's
 // exit error, if any.
 func (r *Runner) RunSetup(setupCmd string) error {
-	cmd := exec.Command("sh", "-c", setupCmd)
+	return r.RunSetupContext(context.Background(), setupCmd)
+}
+
+// RunSetupContext cancels the entire setup process group, including children.
+func (r *Runner) RunSetupContext(ctx context.Context, setupCmd string) error {
+	cmd := exec.CommandContext(ctx, "sh", "-c", setupCmd)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = time.Second
 	cmd.Dir = r.config.Dir
 	cmd.Env = r.buildEnv()
 	cmd.Stdout = os.Stdout
@@ -256,8 +265,8 @@ func (r *Runner) builtins() map[string]string {
 	for svcName, svcPort := range r.config.AllServicePorts {
 		up := strings.ToUpper(svcName)
 		m["ISOLA_"+up+"_PORT"] = fmt.Sprintf("%d", svcPort)
-		// Loopback URL that reaches the sibling's backend directly, bypassing the
-		// proxy and DNS. Portable across OSes for server-side calls; the proxy
+		// Loopback URL for server-side calls without DNS. For an on-demand
+		// sibling this reaches its daemon-owned public listener; the qualified
 		// URL below needs *.localhost to resolve.
 		m["ISOLA_"+up+"_DIRECT_URL"] = browser.DirectURL(svcPort)
 	}

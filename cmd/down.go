@@ -64,6 +64,7 @@ var downCmd = &cobra.Command{
 		}
 
 		totalStopped := 0
+		totalFailed := 0
 		for _, tree := range trees {
 			if tree.IsBare {
 				continue
@@ -72,6 +73,7 @@ var downCmd = &cobra.Command{
 			for _, r := range results {
 				if r.Err != nil {
 					logging.Error("stopping %s/%s: %v", r.Branch, r.Service, r.Err)
+					totalFailed++
 				} else {
 					logging.Info("Stopping %s for %s ...", r.Service, r.Branch)
 					totalStopped++
@@ -94,12 +96,16 @@ var downCmd = &cobra.Command{
 		// Taking the whole project down removes its shared-proxy registration so
 		// the daemon no longer advertises routes for it. The machine-wide daemon
 		// keeps running for other projects; stop it with `isola proxy stop`.
-		if downAll && len(services) == 0 {
+		if downAll && len(services) == 0 && totalFailed == 0 {
 			if reg, err := registry.Open(); err == nil {
 				if err := reg.Deregister(store.Dir()); err != nil {
 					logging.Warn("deregistering project from proxy: %v", err)
 				}
 			}
+		}
+
+		if totalFailed > 0 {
+			return fmt.Errorf("%d service(s) failed to stop; see the errors above", totalFailed)
 		}
 
 		return nil

@@ -65,7 +65,7 @@ services marked `on_demand = true`.
 | Field        | Type         | Required | Description                                                                     |
 | ------------ | ------------ | -------- | ------------------------------------------------------------------------------- |
 | `command`    | string       | yes      | Shell command to start the service                                              |
-| `on_demand`  | bool         | no       | Defer startup until the first proxy request or an explicit start (default `false`) |
+| `on_demand`  | bool         | no       | Defer startup until the first proxy/direct request or an explicit start (default `false`) |
 | `setup`      | string       | no       | Command run before `command` on each `up` (deps, migrations); runs in `dir` with the service's env. Make it idempotent; failure blocks the service |
 | `dir`        | string       | no       | Working directory relative to worktree root (default: root)                     |
 | `port_range` | `{min, max}` | no       | Port allocation range. Omit for a background process that doesn't listen (see below) |
@@ -113,7 +113,8 @@ and shows it as `on-demand` in `isola ls` and the dashboard. Its command,
 service setup, and env-file writes wait until it starts. Root setup, file
 copying, and accessory provisioning still happen during `up`.
 
-- **Automatic:** visit its usual proxy URL. The proxy starts the service and
+- **Automatic:** visit its usual proxy URL or `direct_url` (`127.0.0.1:<port>` /
+  `localhost:<port>`). The daemon starts the service and
   waits for its listening port before forwarding the original request.
   Concurrent requests share one startup. Each request waits up to two minutes;
   setup continues if the browser disconnects or times out.
@@ -124,6 +125,8 @@ copying, and accessory provisioning still happen during `up`.
 - **Stop:** `isola down --service admin` or dashboard `x` stops and disarms it.
   Further requests do not restart it. Run `isola up` again to re-arm it, or
   explicitly start it. Plain `down` also disarms every on-demand service.
+  A stop during service setup cancels its process group and prevents the service
+  from launching afterward; stop errors produce a nonzero CLI exit status.
 
 `up` and `down` both accept comma-separated service lists and repeated `--service`
 flags. The whole list is validated before anything starts or stops; duplicate
@@ -135,10 +138,24 @@ Once started, a service stays running until stopped; there is no idle shutdown.
 Repeated `up` leaves already-running services alone. Dashboard `a` follows the
 same startup policy as `up` across worktrees.
 
-Automatic startup requires a running proxy and a `proxy_port`. Direct backend
-URLs and raw port connections do not trigger it. Background and internal
-services can also use `on_demand`, but must be started explicitly. Referencing
-another service's URL or port in env does not start that service.
+Direct-port startup requires the shared daemon (`[proxy].enabled = true`, the
+default). It also works for internal services with a `port_range` and no
+`proxy_port`. A background service with no port still needs an explicit start.
+With `[proxy].enabled = false`, explicitly started services bind their assigned
+port themselves, and direct connections cannot wake idle services.
+
+For on-demand services managed by the daemon, `isola ls`, `direct_url`, and
+`${services.<name>.port}` keep the stable public port from `port_range`. The
+service must bind `$PORT`, which is a separate private port assigned at startup.
+The daemon relays direct TCP traffic on IPv4/IPv6 loopback, including HTTP and
+WebSocket upgrades. Direct URLs remain plain HTTP even if qualified URLs use
+HTTPS. `isola up` waits for these public listeners to be ready; stopping the
+shared proxy interrupts direct access until it is restarted.
+
+Direct listeners wake on the first bytes sent by a client. Connect-and-close
+port probes do not wake services. For protocols where the server speaks first,
+start the service explicitly before connecting. Env references alone do not
+start services; a call to the referenced direct URL does.
 
 If service setup fails, later requests do not retry it automatically. Fix the
 failure and run `isola up --service admin` to retry, or `isola up` to re-arm it.
@@ -156,7 +173,7 @@ Env values can reference isola-provided sources with `${...}`:
 | ------------------------ | -------------------------------------------------------- |
 | `${accessories.<name>.url}`    | the accessory's connection string                     |
 | `${services.<name>.url}`       | a sibling's proxy URL (`<slug>.<project>.localhost:<proxy_port>`); routes through the proxy, so needs `*.localhost` to resolve (use for browser links) |
-| `${services.<name>.direct_url}` | a sibling's direct loopback URL (`http://127.0.0.1:<port>`); no DNS, no proxy (use for server-side calls between services) |
+| `${services.<name>.direct_url}` | a sibling's direct loopback URL (`http://127.0.0.1:<port>`); no DNS; wakes on-demand services through the daemon (use for server-side calls) |
 | `${services.<name>.port}`      | a sibling's allocated backend port                    |
 | `${proxy.ca_cert}`             | path to isola's dev CA (HTTPS only; empty otherwise), e.g. `NODE_EXTRA_CA_CERTS = "${proxy.ca_cert}"` |
 

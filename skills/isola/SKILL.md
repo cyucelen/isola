@@ -56,7 +56,9 @@ using them. `--service` also accepts repeated flags. Start any other services
 the operation needs too (such as an API or worker), while leaving unrelated
 optional services idle. Prefer this targeted start to changing `on_demand` or
 bringing up every worktree. An armed service can also start on its first proxy
-request, but direct backend URLs and background workers need explicit startup.
+or direct-port request while the shared daemon is running. Background workers
+without ports still need explicit startup. Keep using the listed public port;
+on-demand services bind the separate `$PORT` supplied by isola.
 See [references/dev.md](references/dev.md#using-on-demand-services) for the workflow.
 
 ## References

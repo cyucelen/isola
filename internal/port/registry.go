@@ -41,6 +41,16 @@ func (r *Registry) AssignPort(branch, service string) (int, error) {
 		for _, p := range st.PortAssignments {
 			used[p] = true
 		}
+		for _, services := range st.Services {
+			for _, ss := range services {
+				if ss != nil && ss.BackendPort > 0 {
+					used[ss.BackendPort] = true
+				}
+			}
+		}
+		for _, p := range r.cfg.ProxyPorts() {
+			used[p] = true
+		}
 
 		svc := r.cfg.Services[service]
 		allocated, err := Allocate(branch, service, svc, fixedPort, used)
