@@ -103,7 +103,7 @@ func main() {
 			http.Error(w, "call failed: "+err.Error(), http.StatusBadGateway)
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		b, _ := io.ReadAll(resp.Body)
 		_, _ = w.Write([]byte("via:" + string(b)))
 	})
@@ -910,7 +910,7 @@ proxy_port = 4910
 		if err != nil {
 			return err
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		got, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return err
@@ -1170,7 +1170,7 @@ MARKER = "lazy-api"
 		if err != nil {
 			return 0, "", err
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		data, err := io.ReadAll(resp.Body)
 		return resp.StatusCode, string(data), err
 	}
@@ -1304,7 +1304,6 @@ MARKER = "lazy-api"
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-
 }
 
 func TestDownCancelsServiceSetup(t *testing.T) {

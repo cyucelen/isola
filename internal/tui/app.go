@@ -289,7 +289,7 @@ func (m *Model) actOnSelected(verb string, act func(*git.Worktree, string) []pro
 }
 
 func (m *Model) startSelected() tea.Msg {
-	return m.actOnSelected("Started", m.manager.StartServices)
+	return m.actOnSelected("Started", m.startServices)
 }
 
 func (m *Model) stopSelected() tea.Msg {
@@ -298,9 +298,52 @@ func (m *Model) stopSelected() tea.Msg {
 
 func (m *Model) restartSelected() tea.Msg {
 	return m.actOnSelected("Restarted", func(tree *git.Worktree, svc string) []process.ServiceResult {
-		m.manager.StopServices(tree, svc)
-		return m.manager.StartServices(tree, svc)
+		stopped := m.manager.StopServices(tree, svc)
+		for _, result := range stopped {
+			if result.Err != nil {
+				return stopped
+			}
+		}
+		return m.startServices(tree, svc)
 	})
+}
+
+// Dashboard starts need the same registration and listener readiness as `up`:
+// on-demand services bind private backends and rely on the daemon for access.
+func (m *Model) startServices(tree *git.Worktree, service string) []process.ServiceResult {
+	var reg *registry.Store
+	if m.cfg.AutoProxyEnabled() && m.needsProxy() {
+		var err error
+		reg, err = registry.Open()
+		if err == nil {
+			err = reg.Register(registry.Project{
+				Name: m.cfg.Project, StateDir: m.store.Dir(),
+				ProxyPorts: m.cfg.ProxyPorts(), HTTPS: m.cfg.Proxy.HTTPS,
+			})
+		}
+		if err == nil {
+			_, err = proxy.EnsureDaemon(reg)
+		}
+		if err != nil {
+			return []process.ServiceResult{{Branch: tree.Branch, Service: service, Err: fmt.Errorf("preparing proxy: %w", err)}}
+		}
+	}
+	results := m.manager.StartServices(tree, service)
+	if reg != nil {
+		if err := proxy.WaitDirectListeners(reg, m.store, []string{tree.Branch}); err != nil {
+			results = append(results, process.ServiceResult{Branch: tree.Branch, Service: service, Err: err})
+		}
+	}
+	return results
+}
+
+func (m *Model) needsProxy() bool {
+	for _, svc := range m.cfg.Services {
+		if svc.ProxyPort > 0 || (svc.OnDemand && svc.PortRange.Max > 0) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) toggleProxy() tea.Msg {
@@ -367,12 +410,16 @@ func (m *Model) openSelected() tea.Msg {
 func (m *Model) actOnAll(verb string, act func(*git.Worktree, string) []process.ServiceResult) tea.Msg {
 	count := 0
 	onDemand := 0
+	var firstErr error
 	for _, tree := range m.trees {
 		if tree.IsBare {
 			continue
 		}
 		tree := tree
 		for _, r := range act(&tree, "") {
+			if r.Err != nil && firstErr == nil {
+				firstErr = r.Err
+			}
 			if r.Err == nil && r.OnDemand {
 				onDemand++
 			}
@@ -381,6 +428,9 @@ func (m *Model) actOnAll(verb string, act func(*git.Worktree, string) []process.
 			}
 		}
 	}
+	if firstErr != nil {
+		return ActionResultMsg{Message: fmt.Sprintf("%s %d services; error: %v", verb, count, firstErr), IsError: true}
+	}
 	if onDemand > 0 {
 		return ActionResultMsg{Message: fmt.Sprintf("%s %d services; %d on demand", verb, count, onDemand)}
 	}
@@ -388,7 +438,7 @@ func (m *Model) actOnAll(verb string, act func(*git.Worktree, string) []process.
 }
 
 func (m *Model) startAll() tea.Msg {
-	return m.actOnAll("Started", m.manager.StartServices)
+	return m.actOnAll("Started", m.startServices)
 }
 
 func (m *Model) stopAll() tea.Msg {

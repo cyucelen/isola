@@ -102,19 +102,33 @@ type ServiceResult struct {
 // Without a filter, on-demand services are armed instead of started.
 // If serviceFilter is non-empty, that service is started immediately.
 func (m *Manager) StartServices(tree *git.Worktree, serviceFilter string) []ServiceResult {
-	return m.startServices(tree, serviceFilter, false)
+	return m.startServices(tree, m.targetServices(serviceFilter), serviceFilter == "", false)
+}
+
+// StartSelectedServices starts an explicit selection in order, capturing stop
+// intent for the whole selection before starting its first service. An empty
+// selection starts the default stack, arming on-demand services.
+func (m *Manager) StartSelectedServices(tree *git.Worktree, services []string) []ServiceResult {
+	if len(services) == 0 {
+		return m.StartServices(tree, "")
+	}
+	for _, name := range services {
+		if _, ok := m.cfg.Services[name]; !ok {
+			return []ServiceResult{{Branch: tree.Branch, Service: name, Err: fmt.Errorf("unknown service %q", name)}}
+		}
+	}
+	return m.startServices(tree, services, false, false)
 }
 
 // WakeService starts only an armed service, checking under the lifecycle lock
 // so a concurrent explicit stop cannot be undone by an in-flight request.
 func (m *Manager) WakeService(tree *git.Worktree, service string) []ServiceResult {
-	return m.startServices(tree, service, true)
+	return m.startServices(tree, m.targetServices(service), false, true)
 }
 
-func (m *Manager) startServices(tree *git.Worktree, serviceFilter string, onlyArmed bool) []ServiceResult {
+func (m *Manager) startServices(tree *git.Worktree, services []string, armOnDemand, onlyArmed bool) []ServiceResult {
 	var results []ServiceResult
 
-	services := m.targetServices(serviceFilter)
 	initial, err := m.store.LoadLocked()
 	if err != nil {
 		return []ServiceResult{{Branch: tree.Branch, Err: err}}
@@ -213,7 +227,7 @@ func (m *Manager) startServices(tree *git.Worktree, serviceFilter string, onlyAr
 				return nil
 			}
 
-			if serviceFilter == "" && m.cfg.Services[svcName].OnDemand {
+			if armOnDemand && m.cfg.Services[svcName].OnDemand {
 				err := m.store.WithLock(func() error {
 					st, err := m.store.Load()
 					if err != nil {

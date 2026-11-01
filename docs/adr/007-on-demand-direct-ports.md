@@ -31,7 +31,8 @@ For `on_demand = true` services with ports and automatic proxy management enable
 - Wait for client bytes before waking an idle service so port-availability
   probes do not trigger startup. Server-first protocols require an explicit
   start; already-started services forward immediately.
-- Publish listener readiness with the daemon PID. `up` waits for readiness;
+- Publish listener readiness with the daemon PID. CLI and dashboard starts
+  register the project, ensure the daemon is running, and wait for readiness;
   stale records from a prior daemon do not count. Stopping services or removing
   registry/state entries releases listeners and their connections on the next
   daemon sync. The daemon reconstructs listeners from live state after restart.
@@ -42,6 +43,8 @@ For service lifecycle operations:
 
 - Persist a monotonically increasing `StopVersion` before waiting for the
   service lock. Capture it when starting and reject starts invalidated by a stop.
+  Capture the entire selected service list before processing its first service,
+  so a stop also cancels services queued behind another service's setup.
 - Run service setup in a cancellable process group, polling stop intent across
   processes. Stop cancels the entire setup group. Recheck stop intent before
   spawning the service; the lifecycle lock serializes the final start/stop.

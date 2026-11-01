@@ -99,7 +99,7 @@ var upCmd = &cobra.Command{
 				continue
 			}
 
-			results := actOnServices(&tree, services, mgr.StartServices)
+			results := mgr.StartSelectedServices(&tree, services)
 			for _, r := range results {
 				switch {
 				case r.Err != nil:
