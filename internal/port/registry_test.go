@@ -92,3 +92,21 @@ func TestRegistryReassignReturnsSamePort(t *testing.T) {
 		t.Errorf("re-assign = %d, want %d (should reuse)", again, assigned)
 	}
 }
+
+func TestRegistryReservesStartingBackendPorts(t *testing.T) {
+	reg := newTestRegistry(t)
+	svc := reg.cfg.Services["web"]
+	svc.PortRange = config.PortRange{Min: 3180, Max: 3180}
+	reg.cfg.Services["web"] = svc
+	st, err := reg.store.LoadLocked()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.SetServiceState(st, "other", "api", &state.ServiceState{Port: 3100, BackendPort: 3180, Direct: true, Status: state.StatusStarting})
+	if err := reg.store.Save(st); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reg.AssignPort("main", "web"); err == nil {
+		t.Fatal("allocated a private port reserved by a starting service")
+	}
+}

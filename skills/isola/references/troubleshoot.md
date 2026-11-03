@@ -20,6 +20,23 @@ Each line is one check; a ✗ points at the fix:
 - **worktree state consistent** — flags branches in state with no worktree on
   disk (orphans) and tells you to run `isola down --prune`.
 
+## An on-demand service isn't running
+
+Check `isola ls --json` for the target worktree. `on-demand` is intentionally
+idle, not a crash. If the task needs it, run `isola up --service <name>` there
+and verify readiness. Both proxy URLs and listed direct URLs can wake an armed
+service while the daemon runs. With `[proxy].enabled = false`, direct wake-up is
+disabled. Bare TCP probes do not wake services; send an actual request. `stopped` services need an explicit start
+or another `up` to re-arm them after `down`.
+
+A proxy **503 "Service could not start"** means startup failed or the request
+timed out waiting for it. Check service logs and `~/.isola/logs/proxy.log` for
+proxy-triggered setup output. Setup may still be running after a request times
+out; check its progress before retrying. Failed service setup is not retried
+automatically by later requests. Fix the cause, then use `up --service <name>`.
+After upgrading from an older isola, restart the shared proxy to enable automatic
+startup (`isola proxy stop` then `isola up`).
+
 ## A service won't start / "port already in use"
 
 Ports are hash-allocated per `branch:service` within each service's

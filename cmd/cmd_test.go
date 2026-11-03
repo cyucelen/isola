@@ -95,10 +95,10 @@ func resetRootCmd() {
 
 	// Reset cobra flag variables to defaults.
 	downAll = false
-	downService = ""
+	downServices = nil
 	downPrune = false
 	upAll = false
-	upService = ""
+	upServices = nil
 	logsFollow = false
 	logsTail = 50
 	logsService = ""
@@ -110,9 +110,13 @@ func resetRootCmd() {
 
 	// Local command flags keep their value across Execute() calls in one test
 	// binary, so a --json passed by one test would leak into the next.
-	for _, c := range []*cobra.Command{lsCmd, accessoryLsCmd} {
+	for _, c := range []*cobra.Command{lsCmd, accessoryLsCmd, upCmd, downCmd} {
 		c.Flags().VisitAll(func(f *pflag.Flag) {
-			_ = f.Value.Set(f.DefValue)
+			if slice, ok := f.Value.(pflag.SliceValue); ok {
+				_ = slice.Replace(nil)
+			} else {
+				_ = f.Value.Set(f.DefValue)
+			}
 			f.Changed = false
 		})
 	}

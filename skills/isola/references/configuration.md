@@ -20,6 +20,7 @@ processes from scratch) is the separate **isola-init** skill.
 | Field        | Type         | Required | Notes |
 | ------------ | ------------ | -------- | ----- |
 | `command`    | string       | yes      | Start command; runs via `sh -c` in `dir` |
+| `on_demand`  | bool         | no       | Default `false`; defer command/setup until proxy/direct traffic or explicit start |
 | `setup`      | string       | no       | Runs before `command` on each `up` (deps, migrations), in `dir` with the service's env. Keep idempotent; a failure blocks the service |
 | `dir`        | string       | no       | Working dir relative to the worktree root (default: root) |
 | `port_range` | `{min, max}` | no       | Per-branch port pool. Omit for a background process |
@@ -40,6 +41,25 @@ does *not* work — pnpm inserts its own `--` and the flag is swallowed; use
 `npx vite --port $PORT` or read `$PORT` in the tool's own config
 ([#9](https://github.com/cyucelen/isola/issues/9)). Use the repo's actual run
 command; don't hand-write one when a script exists.
+
+### On-demand services
+
+Set `on_demand = true` for optional services. `isola up` reserves their ports
+and arms them (`on-demand` status), without running service setup or command.
+Root setup and accessory provisioning still run. A request through a running
+proxy or listed direct URL starts the service and waits for its port. Direct
+wake-up requires `[proxy].enabled = true` and the shared daemon. It also works
+for internal services without a `proxy_port`; background services need explicit
+startup. The service must bind `$PORT` (a private backend port), while sibling
+port refs and `direct_url` keep the public port.
+Use `isola up --service <name>` or dashboard `s` to start explicitly (also works
+for background/internal services). Start several with `isola up --service api,worker`
+or repeated `--service` flags; `down` accepts the same list syntax.
+Dashboard `o` opens an armed service's URL.
+`down` / dashboard `x` disarms it, so requests cannot undo the stop; `up` re-arms
+it. Running services stay running, with no idle shutdown. Failed service setup
+requires another `up` or explicit start; proxy-triggered setup logs are in
+`~/.isola/logs/proxy.log`. Restart an older proxy after upgrading isola.
 
 ### Env references
 

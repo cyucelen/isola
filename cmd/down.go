@@ -15,19 +15,25 @@ import (
 )
 
 var (
-	downAll     bool
-	downService string
-	downPrune   bool
+	downAll      bool
+	downServices []string
+	downPrune    bool
 )
 
 var downCmd = &cobra.Command{
 	Use:   "down",
+	Args:  cobra.NoArgs,
 	Short: "Stop services for the current worktree",
-	Long:  "Stops all running services (or a specific one) for the current worktree, or all worktrees with --all.",
+	Long:  "Stops services for the current worktree, or all worktrees with --all. Use --service api,web to select services; the flag can also be repeated.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("getting current directory: %w", err)
+		}
+
+		services, err := selectedServices(downServices, cmd.Flags().Changed("service"))
+		if err != nil {
+			return err
 		}
 
 		store, err := openStateStore()
@@ -38,12 +44,6 @@ var downCmd = &cobra.Command{
 		// Handle --prune: remove orphaned state entries.
 		if downPrune {
 			return pruneOrphanedState(store, cwd)
-		}
-
-		if downService != "" {
-			if _, ok := cfg.Services[downService]; !ok {
-				return fmt.Errorf("unknown service %q", downService)
-			}
 		}
 
 		portReg := port.NewRegistry(store, cfg)
@@ -64,14 +64,16 @@ var downCmd = &cobra.Command{
 		}
 
 		totalStopped := 0
+		totalFailed := 0
 		for _, tree := range trees {
 			if tree.IsBare {
 				continue
 			}
-			results := mgr.StopServices(&tree, downService)
+			results := actOnServices(&tree, services, mgr.StopServices)
 			for _, r := range results {
 				if r.Err != nil {
 					logging.Error("stopping %s/%s: %v", r.Branch, r.Service, r.Err)
+					totalFailed++
 				} else {
 					logging.Info("Stopping %s for %s ...", r.Service, r.Branch)
 					totalStopped++
@@ -94,12 +96,16 @@ var downCmd = &cobra.Command{
 		// Taking the whole project down removes its shared-proxy registration so
 		// the daemon no longer advertises routes for it. The machine-wide daemon
 		// keeps running for other projects; stop it with `isola proxy stop`.
-		if downAll && downService == "" {
+		if downAll && len(services) == 0 && totalFailed == 0 {
 			if reg, err := registry.Open(); err == nil {
 				if err := reg.Deregister(store.Dir()); err != nil {
 					logging.Warn("deregistering project from proxy: %v", err)
 				}
 			}
+		}
+
+		if totalFailed > 0 {
+			return fmt.Errorf("%d service(s) failed to stop; see the errors above", totalFailed)
 		}
 
 		return nil
@@ -129,7 +135,8 @@ func pruneOrphanedState(store *state.FileStore, cwd string) error {
 
 func init() {
 	downCmd.Flags().BoolVar(&downAll, "all", false, "Stop services for all worktrees")
-	downCmd.Flags().StringVar(&downService, "service", "", "Stop only a specific service")
+	downCmd.Flags().StringSliceVar(&downServices, "service", nil, "Stop selected services (comma-separated or repeated)")
 	downCmd.Flags().BoolVar(&downPrune, "prune", false, "Remove state entries for deleted worktrees")
+	downCmd.MarkFlagsMutuallyExclusive("prune", "service")
 	rootCmd.AddCommand(downCmd)
 }

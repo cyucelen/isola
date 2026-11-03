@@ -3,6 +3,7 @@ package proxy
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/cyucelen/isola/internal/config"
 	"github.com/cyucelen/isola/internal/git"
@@ -11,17 +12,24 @@ import (
 
 // Resolver maps slug + proxy_port to real backend port.
 type Resolver struct {
-	cfg   *config.Config
-	store *state.FileStore
+	cfg    *config.Config
+	store  *state.FileStore
+	mu     sync.Mutex
+	starts map[string]*pendingStart
 }
 
 // NewResolver creates a new Resolver.
 func NewResolver(cfg *config.Config, store *state.FileStore) *Resolver {
-	return &Resolver{cfg: cfg, store: store}
+	return &Resolver{cfg: cfg, store: store, starts: make(map[string]*pendingStart)}
 }
 
 // Resolve returns the real backend port for a slug and proxy port.
 func (r *Resolver) Resolve(slug string, proxyPort int) (int, error) {
+	_, _, port, err := r.resolveTarget(slug, proxyPort)
+	return port, err
+}
+
+func (r *Resolver) resolveTarget(slug string, proxyPort int) (string, string, int, error) {
 	// Find which service uses this proxy port.
 	serviceName := ""
 	for name, svc := range r.cfg.Services {
@@ -31,7 +39,7 @@ func (r *Resolver) Resolve(slug string, proxyPort int) (int, error) {
 		}
 	}
 	if serviceName == "" {
-		return 0, fmt.Errorf("no service configured for proxy_port %d", proxyPort)
+		return "", "", 0, fmt.Errorf("no service configured for proxy_port %d", proxyPort)
 	}
 
 	// Resolve branch and port in a single lock to avoid inconsistency.
@@ -58,13 +66,13 @@ func (r *Resolver) Resolve(slug string, proxyPort int) (int, error) {
 		port = state.GetPortAssignment(st, branch, serviceName)
 		return nil
 	}); err != nil {
-		return 0, err
+		return "", "", 0, err
 	}
 
 	if port == 0 {
-		return 0, fmt.Errorf("no port assigned for %s/%s (slug: %s)", branch, serviceName, slug)
+		return "", "", 0, fmt.Errorf("no port assigned for %s/%s (slug: %s)", branch, serviceName, slug)
 	}
-	return port, nil
+	return branch, serviceName, port, nil
 }
 
 // ParseHost splits a Host header into slug and project for the qualified scheme

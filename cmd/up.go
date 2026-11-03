@@ -21,14 +21,15 @@ import (
 )
 
 var (
-	upAll     bool
-	upService string
+	upAll      bool
+	upServices []string
 )
 
 var upCmd = &cobra.Command{
 	Use:   "up",
+	Args:  cobra.NoArgs,
 	Short: "Start services for the current worktree",
-	Long:  "Starts all configured services (or a specific one) for the current worktree, or all worktrees with --all.",
+	Long:  "Starts services for the current worktree, or all worktrees with --all. Services with on_demand = true wait for their first proxy request; --service api,web starts the selected services immediately. The flag can also be repeated.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -36,10 +37,9 @@ var upCmd = &cobra.Command{
 		}
 
 		// Validate service filter.
-		if upService != "" {
-			if _, ok := cfg.Services[upService]; !ok {
-				return fmt.Errorf("unknown service %q", upService)
-			}
+		services, err := selectedServices(upServices, cmd.Flags().Changed("service"))
+		if err != nil {
+			return err
 		}
 
 		store, err := openStateStore()
@@ -74,6 +74,7 @@ var upCmd = &cobra.Command{
 		totalStarted := 0
 		totalRunning := 0
 		totalFailed := 0
+		totalOnDemand := 0
 		for _, tree := range trees {
 			if tree.IsBare {
 				continue
@@ -98,7 +99,7 @@ var upCmd = &cobra.Command{
 				continue
 			}
 
-			results := mgr.StartServices(&tree, upService)
+			results := mgr.StartSelectedServices(&tree, services)
 			for _, r := range results {
 				switch {
 				case r.Err != nil:
@@ -107,6 +108,9 @@ var upCmd = &cobra.Command{
 				case r.AlreadyRunning:
 					logging.Info("%s already running (port %d) for %s", r.Service, r.Port, r.Branch)
 					totalRunning++
+				case r.OnDemand:
+					logging.Info("%s on demand for %s; start with `isola up --service %s`", r.Service, r.Branch, r.Service)
+					totalOnDemand++
 				default:
 					logging.Info("Starting %s (port %d) for %s ...", r.Service, r.Port, r.Branch)
 					totalStarted++
@@ -125,7 +129,7 @@ var upCmd = &cobra.Command{
 				logging.Info("✓ %d %s started for %s", totalStarted, noun, trees[0].Branch)
 			}
 		} else if totalRunning > 0 && totalFailed == 0 {
-			logging.Info("✓ already up to date; all services running")
+			logging.Info("✓ already up to date; default services running")
 		}
 
 		// Tear down worktrees that were removed (git has no worktree-removal
@@ -148,9 +152,24 @@ var upCmd = &cobra.Command{
 		// daemon is running (unless disabled), so services are reachable at
 		// <branch>.<project>.localhost without a separate command.
 		if cfg.AutoProxyEnabled() {
+			directRequired := false
+			st, err := store.LoadLocked()
+			if err != nil {
+				return fmt.Errorf("checking direct listeners: %w", err)
+			}
+			for _, tree := range trees {
+				for _, ss := range st.Services[tree.Branch] {
+					if ss != nil && ss.Direct {
+						directRequired = true
+					}
+				}
+			}
 			reg, err := registry.Open()
 			if err != nil {
 				logging.Warn("proxy registry unavailable: %v", err)
+				if directRequired {
+					totalFailed++
+				}
 			} else {
 				// Capture the project's previous registration before overwriting
 				// it, so we can tell whether the proxy scheme or ports changed.
@@ -162,6 +181,9 @@ var upCmd = &cobra.Command{
 					HTTPS:      cfg.Proxy.HTTPS,
 				}); regErr != nil {
 					logging.Warn("registering project with proxy: %v", regErr)
+					if directRequired {
+						totalFailed++
+					}
 				} else {
 					started, derr := proxy.EnsureDaemon(reg)
 					switch {
@@ -180,9 +202,20 @@ var upCmd = &cobra.Command{
 						warnStaleProxyBuild(reg)
 					}
 
+					branches := make([]string, 0, len(trees))
+					for _, tree := range trees {
+						if !tree.IsBare {
+							branches = append(branches, tree.Branch)
+						}
+					}
+					if err := proxy.WaitDirectListeners(reg, store, branches); err != nil {
+						logging.Error("%v", err)
+						totalFailed++
+					}
+
 					// Only advertise reachability when something is actually up;
 					// printing it after a failed start reads as false success.
-					if totalStarted > 0 || totalRunning > 0 {
+					if totalStarted > 0 || totalRunning > 0 || totalOnDemand > 0 {
 						logging.Info("Reach services at %s://<branch-slug>.%s.localhost:<proxy_port>", config.Scheme(cfg.Proxy.HTTPS), cfg.Project)
 					}
 
@@ -285,6 +318,6 @@ func sameInts(a, b []int) bool {
 
 func init() {
 	upCmd.Flags().BoolVar(&upAll, "all", false, "Start services for all worktrees")
-	upCmd.Flags().StringVar(&upService, "service", "", "Start only a specific service")
+	upCmd.Flags().StringSliceVar(&upServices, "service", nil, "Start selected services (comma-separated or repeated)")
 	rootCmd.AddCommand(upCmd)
 }

@@ -43,6 +43,7 @@ type Daemon struct {
 	servers   map[int]*http.Server
 	getCert   func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 	resolvers map[string]*cachedResolver // by project name
+	direct    map[string]*directListener
 }
 
 type cachedResolver struct {
@@ -59,6 +60,7 @@ func NewDaemon(reg *registry.Store) *Daemon {
 		certDir:   filepath.Join(reg.Dir(), "certs"),
 		servers:   map[int]*http.Server{},
 		resolvers: map[string]*cachedResolver{},
+		direct:    map[string]*directListener{},
 	}
 }
 
@@ -131,7 +133,6 @@ func (d *Daemon) sync() error {
 		return err
 	}
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	for port, https := range httpsByPort {
 		if _, ok := d.servers[port]; ok {
 			continue
@@ -140,7 +141,8 @@ func (d *Daemon) sync() error {
 			logging.Warn("proxy: cannot serve port %d: %v", port, err)
 		}
 	}
-	return nil
+	d.mu.Unlock()
+	return d.syncDirect()
 }
 
 func (d *Daemon) listenLocked(port int, https bool) error {
@@ -208,11 +210,22 @@ func (d *Daemon) handler(port int) http.Handler {
 				fmt.Sprintf("No project %q is registered on this machine.\nRun `isola up` in that repo.", project))
 			return
 		}
-		backendPort, err := res.Resolve(slug, port)
+		branch, service, backendPort, err := res.resolveTarget(slug, port)
 		if err != nil {
 			writeProxyError(w, r, http.StatusNotFound, "Worktree not reachable",
 				fmt.Sprintf("No worktree %q in project %q is serving port %d.\nIs it `isola up`?", slug, project, port))
 			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), onDemandWait)
+		err = res.wake(ctx, branch, service, backendPort)
+		cancel()
+		if err != nil {
+			writeProxyError(w, r, http.StatusServiceUnavailable, "Service could not start",
+				"On-demand startup failed or is still in progress. Check `isola logs` and the proxy log; retry with `isola up --service <name>`.")
+			return
+		}
+		if childPort, direct, err := res.childPort(branch, service); err == nil && direct {
+			backendPort = childPort
 		}
 		target, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", backendPort))
 		rp := &httputil.ReverseProxy{
@@ -267,6 +280,11 @@ func (d *Daemon) resolverFor(project string) (*Resolver, error) {
 func (d *Daemon) stopAll() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	for key, ln := range d.direct {
+		ln.close()
+		delete(d.direct, key)
+	}
+
 	for port, srv := range d.servers {
 		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		_ = srv.Shutdown(ctx)

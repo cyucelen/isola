@@ -16,6 +16,10 @@ const (
 	StatusRunning = "running"
 	// StatusStopped indicates a stopped service or proxy.
 	StatusStopped = "stopped"
+	// StatusOnDemand arms a service for startup on its first proxy request.
+	// An explicit stop clears this state, so requests cannot undo `down`.
+	StatusOnDemand = "on-demand"
+	StatusStarting = "starting"
 )
 
 const lockTimeout = 10 * time.Second
@@ -24,8 +28,14 @@ const lockTimeout = 10 * time.Second
 type ServiceState struct {
 	Port      int    `json:"port"`
 	PID       int    `json:"pid"`
-	Status    string `json:"status"` // StatusRunning, StatusStopped
+	Status    string `json:"status"` // StatusRunning, StatusStopped, StatusOnDemand, StatusStarting
 	StartedAt string `json:"started_at"`
+	// StopVersion invalidates in-flight starts before a stop waits for their lock.
+	StopVersion uint64 `json:"stop_version,omitempty"`
+	// Direct keeps Port as a daemon-owned public listener; the child uses BackendPort.
+	Direct      bool `json:"direct,omitempty"`
+	BackendPort int  `json:"backend_port,omitempty"`
+	ListenerPID int  `json:"listener_pid,omitempty"`
 }
 
 // IsRunning reports whether the record claims a running service with a real PID.
@@ -167,6 +177,12 @@ func (s *FileStore) Dir() string {
 
 // SetServiceState updates the state for a specific branch and service.
 func SetServiceState(st *State, branch, service string, ss *ServiceState) {
+	if prev := GetServiceState(st, branch, service); prev != nil {
+		ss.StopVersion = prev.StopVersion
+		if ss.Direct && prev.Direct && ss.Port == prev.Port {
+			ss.ListenerPID = prev.ListenerPID
+		}
+	}
 	if st.Services[branch] == nil {
 		st.Services[branch] = map[string]*ServiceState{}
 	}

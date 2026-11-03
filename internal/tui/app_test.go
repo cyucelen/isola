@@ -10,8 +10,81 @@ import (
 
 	"github.com/cyucelen/isola/internal/config"
 	"github.com/cyucelen/isola/internal/git"
+	"github.com/cyucelen/isola/internal/port"
+	"github.com/cyucelen/isola/internal/process"
 	"github.com/cyucelen/isola/internal/state"
 )
+
+func TestOnDemandDashboardActions(t *testing.T) {
+	m := testModel(t, nil)
+	m.cfg = &config.Config{Services: map[string]config.ServiceConfig{
+		"worker": {Command: "sleep 60", OnDemand: true},
+	}}
+	m.trees = []git.Worktree{{Path: t.TempDir(), Branch: "main"}}
+	m.manager = process.NewManager(m.cfg, m.store, port.NewRegistry(m.store, m.cfg))
+	t.Cleanup(func() { m.manager.StopServices(&m.trees[0], "") })
+	msg, ok := m.startAll().(ActionResultMsg)
+	if !ok || msg.IsError || msg.Message != "Started 0 services; 1 on demand" {
+		t.Fatalf("start all: %+v", msg)
+	}
+	status, ok := m.refreshStatus().(StatusUpdateMsg)
+	if !ok || len(status.Rows) != 1 || status.Rows[0].Status != state.StatusOnDemand {
+		t.Fatalf("armed dashboard status: %+v", status)
+	}
+	m.rows = status.Rows
+	msg, ok = m.startSelected().(ActionResultMsg)
+	if !ok || msg.IsError {
+		t.Fatalf("explicit start: %+v", msg)
+	}
+	status, ok = m.refreshStatus().(StatusUpdateMsg)
+	if !ok || status.Rows[0].Status != state.StatusRunning {
+		t.Fatalf("explicit start status: %+v", status)
+	}
+	msg, ok = m.stopSelected().(ActionResultMsg)
+	if !ok || msg.IsError {
+		t.Fatalf("explicit stop: %+v", msg)
+	}
+	status, ok = m.refreshStatus().(StatusUpdateMsg)
+	if !ok || status.Rows[0].Status != state.StatusStopped {
+		t.Fatalf("stop did not disarm: %+v", status)
+	}
+}
+
+func TestDashboardReportsProxyPreparationFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// A file at the registry path prevents registration without spawning a daemon.
+	if err := os.WriteFile(filepath.Join(home, ".isola"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"start", "restart", "start all"} {
+		t.Run(action, func(t *testing.T) {
+			m := testModel(t, []ServiceRow{{Branch: "main", Service: "web"}})
+			m.cfg = &config.Config{Project: "dashboard", Services: map[string]config.ServiceConfig{
+				"web": {Command: "touch launched; sleep 60", OnDemand: true, PortRange: config.PortRange{Min: 3100, Max: 3199}},
+			}}
+			m.trees = []git.Worktree{{Path: t.TempDir(), Branch: "main"}}
+			m.manager = process.NewManager(m.cfg, m.store, port.NewRegistry(m.store, m.cfg))
+			t.Cleanup(func() { m.manager.StopServices(&m.trees[0], "") })
+			var result tea.Msg
+			switch action {
+			case "start":
+				result = m.startSelected()
+			case "restart":
+				result = m.restartSelected()
+			case "start all":
+				result = m.startAll()
+			}
+			msg, ok := result.(ActionResultMsg)
+			if !ok || !msg.IsError || !strings.Contains(msg.Message, "preparing proxy") {
+				t.Fatalf("proxy error was hidden: %+v", result)
+			}
+			if _, err := os.Stat(filepath.Join(m.trees[0].Path, "launched")); !os.IsNotExist(err) {
+				t.Fatal("service launched without its required proxy")
+			}
+		})
+	}
+}
 
 // mustModel asserts the tea.Model is *Model, failing the test if not.
 func mustModel(t *testing.T, m tea.Model) *Model {
