@@ -129,7 +129,7 @@ func (m *Manager) WakeService(tree *git.Worktree, service string) []ServiceResul
 func (m *Manager) startServices(tree *git.Worktree, services []string, armOnDemand, onlyArmed bool) []ServiceResult {
 	var results []ServiceResult
 
-	initial, err := m.store.LoadLocked()
+	initial, err := m.store.Snapshot()
 	if err != nil {
 		return []ServiceResult{{Branch: tree.Branch, Err: err}}
 	}
@@ -205,7 +205,7 @@ func (m *Manager) startServices(tree *git.Worktree, services []string, armOnDema
 				return err
 			}
 			if onlyArmed {
-				st, err := m.store.LoadLocked()
+				st, err := m.store.Snapshot()
 				if err != nil {
 					return err
 				}

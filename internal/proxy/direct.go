@@ -44,7 +44,7 @@ func (d *Daemon) syncDirect() error {
 		if err != nil {
 			continue
 		}
-		st, err := res.store.LoadLocked()
+		st, err := res.store.Snapshot()
 		if err != nil {
 			return err
 		}
@@ -140,7 +140,7 @@ func (l *directListener) forward(client net.Conn) {
 	stopClose := context.AfterFunc(l.ctx, func() { _ = client.Close() })
 	defer stopClose()
 	reader := bufio.NewReader(client)
-	st, err := l.resolver.store.LoadLocked()
+	st, err := l.resolver.store.Snapshot()
 	if err != nil {
 		return
 	}
@@ -198,7 +198,7 @@ func WaitDirectListeners(reg *registry.Store, store *state.FileStore, branches [
 		if err != nil {
 			return err
 		}
-		st, err := store.LoadLocked()
+		st, err := store.Snapshot()
 		if err != nil {
 			return err
 		}

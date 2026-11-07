@@ -56,7 +56,7 @@ Use --json to output the result as a JSON array for scripting and automation.`,
 			return fmt.Errorf("creating state store: %w", err)
 		}
 
-		st, err := store.LoadLocked()
+		st, err := store.Snapshot()
 		if err != nil {
 			logging.Warn("failed to load state: %v", err)
 		}

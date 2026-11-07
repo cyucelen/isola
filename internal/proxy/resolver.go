@@ -42,11 +42,11 @@ func (r *Resolver) resolveTarget(slug string, proxyPort int) (string, string, in
 		return "", "", 0, fmt.Errorf("no service configured for proxy_port %d", proxyPort)
 	}
 
-	// Resolve branch and port in a single lock to avoid inconsistency.
+	// Resolve branch and port from one snapshot to avoid inconsistency.
 	var branch string
 	var port int
-	if err := r.store.WithLock(func() error {
-		st, e := r.store.Load()
+	if err := func() error {
+		st, e := r.store.Snapshot()
 		if e != nil {
 			return e
 		}
@@ -65,7 +65,7 @@ func (r *Resolver) resolveTarget(slug string, proxyPort int) (string, string, in
 		}
 		port = state.GetPortAssignment(st, branch, serviceName)
 		return nil
-	}); err != nil {
+	}(); err != nil {
 		return "", "", 0, err
 	}
 

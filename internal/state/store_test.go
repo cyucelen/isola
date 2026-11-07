@@ -517,3 +517,55 @@ func TestAccessoryStateRoundTrip(t *testing.T) {
 		t.Errorf("round-trip lost accessory state: %+v", got)
 	}
 }
+
+func TestSnapshotDoesNotWaitForTheLock(t *testing.T) {
+	store, err := NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := emptyState()
+	st.PortAssignments["main:web"] = 3100
+	if err := store.Save(st); err != nil {
+		t.Fatal(err)
+	}
+
+	held, release := make(chan struct{}), make(chan struct{})
+	go func() {
+		_ = store.WithLock(func() error { close(held); <-release; return nil })
+	}()
+	<-held
+	defer close(release)
+
+	start := time.Now()
+	got, err := store.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 25*time.Millisecond {
+		t.Errorf("Snapshot waited %v while another holder had the lock", elapsed)
+	}
+	if got.PortAssignments["main:web"] != 3100 {
+		t.Errorf("Snapshot() port = %d, want 3100", got.PortAssignments["main:web"])
+	}
+}
+
+func TestSnapshotSetsCorruptStateAside(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewFileStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte("{not json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.PortAssignments) != 0 {
+		t.Errorf("Snapshot() of a corrupt file = %v, want empty state", got.PortAssignments)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "state.json.corrupt")); err != nil {
+		t.Errorf("corrupt state was not set aside: %v", err)
+	}
+}
