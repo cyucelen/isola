@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func newTestStore(t *testing.T) *Store {
@@ -101,5 +102,32 @@ func TestLookup(t *testing.T) {
 	}
 	if _, ok, _ := s.Lookup("absent"); ok {
 		t.Error("Lookup of absent project should be ok=false")
+	}
+}
+
+func TestListDoesNotWaitForTheLock(t *testing.T) {
+	s := newTestStore(t)
+	p := Project{Name: "proj", StateDir: stateDir(t), ProxyPorts: []int{3000}}
+	if err := s.Register(p); err != nil {
+		t.Fatal(err)
+	}
+
+	held, release := make(chan struct{}), make(chan struct{})
+	go func() {
+		_ = s.withLock(func() error { close(held); <-release; return nil })
+	}()
+	<-held
+	defer close(release)
+
+	start := time.Now()
+	got, err := s.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 25*time.Millisecond {
+		t.Errorf("List waited %v while another holder had the lock", elapsed)
+	}
+	if len(got) != 1 || got[0].Name != "proj" {
+		t.Errorf("List() = %v, want [proj]", got)
 	}
 }

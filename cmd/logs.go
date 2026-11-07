@@ -131,7 +131,7 @@ func logsTargets(tree *git.Worktree, store *state.FileStore) []logTarget {
 		sort.Strings(services)
 	}
 
-	st, err := store.LoadLocked()
+	st, err := store.Snapshot()
 	if err != nil {
 		logging.Warn("failed to load state: %v", err)
 	}

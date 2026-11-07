@@ -98,7 +98,7 @@ func TestRegistryReservesStartingBackendPorts(t *testing.T) {
 	svc := reg.cfg.Services["web"]
 	svc.PortRange = config.PortRange{Min: 3180, Max: 3180}
 	reg.cfg.Services["web"] = svc
-	st, err := reg.store.LoadLocked()
+	st, err := reg.store.Snapshot()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -106,6 +106,11 @@ func (s *FileStore) Load() (*State, error) {
 		}
 		return emptyState(), nil
 	}
+	normalize(&st)
+	return &st, nil
+}
+
+func normalize(st *State) {
 	if st.Services == nil {
 		st.Services = map[string]map[string]*ServiceState{}
 	}
@@ -115,14 +120,28 @@ func (s *FileStore) Load() (*State, error) {
 	if st.Accessories == nil {
 		st.Accessories = map[string]map[string]*AccessoryState{}
 	}
-	return &st, nil
 }
 
-// LoadLocked loads the state under the store lock, for read-only callers that
-// only need a consistent snapshot (not a load-mutate-save transaction).
-func (s *FileStore) LoadLocked() (*State, error) {
+// Snapshot reads the state for read-only callers that need a consistent view,
+// not a load-mutate-save transaction. Save replaces the file with an atomic
+// rename, so a plain read always sees a complete version and needs no lock.
+// The proxy reads state on every request, and taking the lock there made
+// parallel browser requests wait on each other's 50ms retry sleeps.
+// Only a file that fails to parse goes through Load under the lock, so the
+// corrupt file is set aside once, by one process.
+func (s *FileStore) Snapshot() (*State, error) {
+	data, err := os.ReadFile(s.filePath)
+	if err == nil {
+		var st State
+		if json.Unmarshal(data, &st) == nil {
+			normalize(&st)
+			return &st, nil
+		}
+	} else if os.IsNotExist(err) {
+		return emptyState(), nil
+	}
 	var st *State
-	err := s.WithLock(func() error {
+	err = s.WithLock(func() error {
 		var e error
 		st, e = s.Load()
 		return e

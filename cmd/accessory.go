@@ -77,7 +77,7 @@ to its resource's length limit with a hash.`,
 		if err != nil {
 			return err
 		}
-		st, err := store.LoadLocked()
+		st, err := store.Snapshot()
 		if err != nil {
 			return fmt.Errorf("loading state: %w", err)
 		}

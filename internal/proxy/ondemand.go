@@ -31,7 +31,7 @@ func (r *Resolver) wake(ctx context.Context, branch, service string, backend int
 	r.mu.Lock()
 	pending := r.starts[key]
 	if pending == nil {
-		st, err := r.store.LoadLocked()
+		st, err := r.store.Snapshot()
 		if err != nil {
 			r.mu.Unlock()
 			return err
@@ -135,7 +135,7 @@ func waitForBackend(ctx context.Context, backend, pid int) error {
 
 // childPort returns the live child address, never the daemon's public listener.
 func (r *Resolver) childPort(branch, service string) (int, bool, error) {
-	st, err := r.store.LoadLocked()
+	st, err := r.store.Snapshot()
 	if err != nil {
 		return 0, false, err
 	}
@@ -153,7 +153,7 @@ func (r *Resolver) readyBackend(ctx context.Context, branch, service string) (in
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		st, err := r.store.LoadLocked()
+		st, err := r.store.Snapshot()
 		if err != nil {
 			return 0, err
 		}

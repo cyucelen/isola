@@ -153,7 +153,7 @@ var upCmd = &cobra.Command{
 		// <branch>.<project>.localhost without a separate command.
 		if cfg.AutoProxyEnabled() {
 			directRequired := false
-			st, err := store.LoadLocked()
+			st, err := store.Snapshot()
 			if err != nil {
 				return fmt.Errorf("checking direct listeners: %w", err)
 			}

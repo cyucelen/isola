@@ -17,7 +17,7 @@ func stopVersion(st *state.State, branch, service string) uint64 {
 }
 
 func (m *Manager) checkStart(branch, service string, version uint64) error {
-	st, err := m.store.LoadLocked()
+	st, err := m.store.Snapshot()
 	if err != nil {
 		return err
 	}

@@ -83,13 +83,32 @@ func Open() (*Store, error) {
 // Dir returns the global directory path.
 func (s *Store) Dir() string { return s.dir }
 
-// writeJSON marshals v as indented JSON and writes it to path with 0600 perms.
+// writeJSON marshals v as indented JSON and replaces path with it (0600 perms)
+// through a temp file and rename, so List can read without the lock: a reader
+// sees the old file or the new one, never a partial write.
 func writeJSON(path string, v any) error {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0600)
+	f, err := os.CreateTemp(filepath.Dir(path), ".registry-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer func() { _ = os.Remove(tmp) }() // no-op once the rename succeeds
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Chmod(0600); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // readJSON reads path and unmarshals it into v. A missing file is not an error
@@ -184,18 +203,14 @@ func (s *Store) Deregister(stateDir string) error {
 	})
 }
 
-// List returns the registered projects (stale entries pruned).
+// List returns the registered projects (stale entries pruned). It reads without
+// the lock (writes are atomic) because the proxy calls it on every request.
 func (s *Store) List() ([]Project, error) {
-	var projects []Project
-	err := s.withLock(func() error {
-		d, err := s.load()
-		if err != nil {
-			return err
-		}
-		projects = prune(d.Projects)
-		return nil
-	})
-	return projects, err
+	d, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	return prune(d.Projects), nil
 }
 
 // Lookup returns the registered project with the given name.

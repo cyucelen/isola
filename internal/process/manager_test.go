@@ -785,7 +785,7 @@ proxy_port = 9000
 			t.Fatal(r.Err)
 		}
 	}
-	st, _ := store.LoadLocked()
+	st, _ := store.Snapshot()
 	ss := state.GetServiceState(st, "main", "optional")
 	if ss == nil || ss.Status != state.StatusOnDemand || ss.PID != 0 || ss.Port == 0 {
 		t.Fatalf("optional should be armed with a port but no process: %+v", ss)
@@ -811,7 +811,7 @@ proxy_port = 9000
 		}
 	}
 	mgr.StopServices(tree, "")
-	st, _ = store.LoadLocked()
+	st, _ = store.Snapshot()
 	if ss := state.GetServiceState(st, "main", "optional"); ss.Status != state.StatusStopped {
 		t.Fatalf("down did not disarm: %+v", ss)
 	}
@@ -838,7 +838,7 @@ on_demand = true
 	if len(results) != 1 || results[0].Err != nil || !results[0].OnDemand {
 		t.Fatalf("arm worker: %+v", results)
 	}
-	st, _ := store.LoadLocked()
+	st, _ := store.Snapshot()
 	if len(st.PortAssignments) != 0 {
 		t.Fatal("background service allocated a port")
 	}
@@ -897,7 +897,7 @@ on_demand = true
 		t.Fatal("setup continued after down")
 	}
 
-	st, _ := store.LoadLocked()
+	st, _ := store.Snapshot()
 	if ss := state.GetServiceState(st, "main", "worker"); ss.Status != state.StatusStopped {
 		t.Fatalf("state after down: %+v", ss)
 	}
