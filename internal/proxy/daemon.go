@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cyucelen/isola/internal/cert"
@@ -42,8 +44,9 @@ type Daemon struct {
 	mu      sync.Mutex
 	servers map[int]*http.Server
 
-	certMu  sync.Mutex
-	getCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+	certMu      sync.Mutex
+	getCert     func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+	httpsWanted atomic.Bool // some registered project has https = true
 
 	resolvers map[string]*cachedResolver // by project name
 	direct    map[string]*directListener
@@ -129,29 +132,42 @@ func (d *Daemon) reconcileOrphans() {
 	}
 }
 
-// sync opens a listener for every registered proxy port not already served.
-// Every port accepts both HTTP and HTTPS (see dualListener), because projects
-// sharing a port may each want a different scheme. The CA is generated as soon
-// as any project wants HTTPS, so `isola up` can find it to trust.
+// sync makes the daemon's listeners match the registry: it opens every
+// registered proxy port not yet served and releases ports no project registers
+// any more, so a moved `proxy_port` frees the old one without a restart. Every
+// port accepts both HTTP and HTTPS (see dualListener), because projects sharing a
+// port may each want a different scheme. The CA is generated as soon as any
+// project wants HTTPS, so `isola up` can find it to trust.
 func (d *Daemon) sync() error {
 	projects, err := d.reg.List()
 	if err != nil {
 		return err
 	}
-	ports, err := d.reg.Ports()
-	if err != nil {
-		return err
-	}
+	ports := map[int]bool{}
+	httpsWanted := false
 	for _, p := range projects {
-		if p.HTTPS {
-			if _, err := d.certGetter(); err != nil {
-				logging.Warn("proxy: %v", err)
-			}
-			break
+		httpsWanted = httpsWanted || p.HTTPS
+		for _, port := range p.ProxyPorts {
+			ports[port] = true
 		}
 	}
+	d.httpsWanted.Store(httpsWanted)
+	if httpsWanted {
+		if _, err := d.certGetter(); err != nil {
+			logging.Warn("proxy: %v", err)
+		}
+	}
+
 	d.mu.Lock()
-	for _, port := range ports {
+	var released []*http.Server
+	for port, srv := range d.servers {
+		if !ports[port] {
+			released = append(released, srv)
+			delete(d.servers, port)
+			logging.Info("proxy: released :%d (no project uses it)", port)
+		}
+	}
+	for port := range ports {
 		if _, ok := d.servers[port]; ok {
 			continue
 		}
@@ -160,7 +176,17 @@ func (d *Daemon) sync() error {
 		}
 	}
 	d.mu.Unlock()
+	// Shut down outside the lock: in-flight requests take d.mu to resolve.
+	for _, srv := range released {
+		go shutdown(srv)
+	}
 	return d.syncDirect()
+}
+
+func shutdown(srv *http.Server) {
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	_ = srv.Shutdown(ctx)
 }
 
 func (d *Daemon) listenLocked(port int) error {
@@ -175,9 +201,13 @@ func (d *Daemon) listenLocked(port int) error {
 		return err
 	}
 	// Certificates are resolved per handshake, so a port bound before any
-	// project wanted HTTPS still serves it once one does.
+	// project wanted HTTPS serves it once one does. Until then a TLS handshake
+	// is refused, so a stray https:// request never mints a CA nobody asked for.
 	dl := newDualListener(ln, &tls.Config{
 		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			if !d.httpsWanted.Load() {
+				return nil, errNoHTTPSProject
+			}
 			getCert, err := d.certGetter()
 			if err != nil {
 				return nil, err
@@ -194,6 +224,10 @@ func (d *Daemon) listenLocked(port int) error {
 	}()
 	return nil
 }
+
+// errNoHTTPSProject refuses a TLS handshake while no registered project has
+// `https = true`.
+var errNoHTTPSProject = errors.New("no isola project on this machine has https enabled")
 
 // certGetter lazily initializes the shared per-SNI certificate minter.
 // It is called from TLS handshakes on any port, so it has its own lock.
