@@ -39,9 +39,12 @@ type Daemon struct {
 	reg     *registry.Store
 	certDir string
 
-	mu        sync.Mutex
-	servers   map[int]*http.Server
-	getCert   func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+	mu      sync.Mutex
+	servers map[int]*http.Server
+
+	certMu  sync.Mutex
+	getCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+
 	resolvers map[string]*cachedResolver // by project name
 	direct    map[string]*directListener
 }
@@ -127,17 +130,32 @@ func (d *Daemon) reconcileOrphans() {
 }
 
 // sync opens a listener for every registered proxy port not already served.
+// Every port accepts both HTTP and HTTPS (see dualListener), because projects
+// sharing a port may each want a different scheme. The CA is generated as soon
+// as any project wants HTTPS, so `isola up` can find it to trust.
 func (d *Daemon) sync() error {
-	httpsByPort, err := d.reg.HTTPSByPort()
+	projects, err := d.reg.List()
 	if err != nil {
 		return err
 	}
+	ports, err := d.reg.Ports()
+	if err != nil {
+		return err
+	}
+	for _, p := range projects {
+		if p.HTTPS {
+			if _, err := d.certGetter(); err != nil {
+				logging.Warn("proxy: %v", err)
+			}
+			break
+		}
+	}
 	d.mu.Lock()
-	for port, https := range httpsByPort {
+	for _, port := range ports {
 		if _, ok := d.servers[port]; ok {
 			continue
 		}
-		if err := d.listenLocked(port, https); err != nil {
+		if err := d.listenLocked(port); err != nil {
 			logging.Warn("proxy: cannot serve port %d: %v", port, err)
 		}
 	}
@@ -145,7 +163,7 @@ func (d *Daemon) sync() error {
 	return d.syncDirect()
 }
 
-func (d *Daemon) listenLocked(port int, https bool) error {
+func (d *Daemon) listenLocked(port int) error {
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
 		Handler:           recoveryMiddleware(d.handler(port)),
@@ -156,19 +174,21 @@ func (d *Daemon) listenLocked(port int, https bool) error {
 	if err != nil {
 		return err
 	}
-	if https {
-		getCert, err := d.certGetter()
-		if err != nil {
-			_ = ln.Close()
-			return err
-		}
-		ln = tls.NewListener(ln, &tls.Config{GetCertificate: getCert})
-	}
+	// Certificates are resolved per handshake, so a port bound before any
+	// project wanted HTTPS still serves it once one does.
+	dl := newDualListener(ln, &tls.Config{
+		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			getCert, err := d.certGetter()
+			if err != nil {
+				return nil, err
+			}
+			return getCert(hello)
+		},
+	})
 	d.servers[port] = srv
-	scheme := config.Scheme(https)
-	logging.Info("proxy: serving %s on :%d", scheme, port)
+	logging.Info("proxy: serving http and https on :%d", port)
 	go func() {
-		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(dl); err != nil && err != http.ErrServerClosed {
 			logging.Error("proxy: server on :%d stopped: %v", port, err)
 		}
 	}()
@@ -176,7 +196,10 @@ func (d *Daemon) listenLocked(port int, https bool) error {
 }
 
 // certGetter lazily initializes the shared per-SNI certificate minter.
+// It is called from TLS handshakes on any port, so it has its own lock.
 func (d *Daemon) certGetter() (func(*tls.ClientHelloInfo) (*tls.Certificate, error), error) {
+	d.certMu.Lock()
+	defer d.certMu.Unlock()
 	if d.getCert != nil {
 		return d.getCert, nil
 	}

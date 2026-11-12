@@ -361,9 +361,10 @@ A single machine-wide proxy serves every isola project, routing
 `<branch>.<project>.localhost:<port>` to the right project's backend. It
 auto-starts in the background on `isola up` and binds the union of every
 registered project's `proxy_port`s. This block is optional; omit it to keep the
-defaults. `enabled`/`https`/`auto_trust` are per project (each contributes its
-ports and HTTPS preference), but the daemon itself is shared: `isola proxy stop`
-stops it for every project.
+defaults. `enabled`/`https`/`auto_trust` are per project, but the daemon itself
+is shared: `isola proxy stop` stops it for every project. Every proxy port answers
+both `http://` and `https://`, so two projects can share a `proxy_port` with
+different `https` settings, and changing `https` needs no proxy restart.
 
 | Field        | Type | Required | Description                                                                              |
 | ------------ | ---- | -------- | ---------------------------------------------------------------------------------------- |
