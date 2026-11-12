@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -54,7 +55,22 @@ type Daemon struct {
 
 type cachedResolver struct {
 	stateDir string
+	cfgStamp fileStamp // the config file as last loaded
 	resolver *Resolver
+}
+
+// fileStamp identifies a version of a file well enough to notice an edit.
+type fileStamp struct {
+	modTime time.Time
+	size    int64
+}
+
+func stampOf(path string) fileStamp {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fileStamp{}
+	}
+	return fileStamp{modTime: fi.ModTime(), size: fi.Size()}
 }
 
 // NewDaemon creates a Daemon backed by the given registry. Certificates for
@@ -305,8 +321,9 @@ func (d *Daemon) handler(port int) http.Handler {
 }
 
 // resolverFor returns a Resolver for the named project, building and caching it
-// from the project's own config and state. The cache is invalidated if the
-// project's registered state dir changes.
+// from the project's own config and state. The cache is rebuilt if the project's
+// registered state dir changes, and its config is reloaded when the config file
+// changes (e.g. a moved proxy_port), so neither needs a daemon restart.
 func (d *Daemon) resolverFor(project string) (*Resolver, error) {
 	p, ok, err := d.reg.Lookup(project)
 	if err != nil {
@@ -317,10 +334,22 @@ func (d *Daemon) resolverFor(project string) (*Resolver, error) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	repoRoot := filepath.Dir(p.StateDir)
+	stamp := stampOf(filepath.Join(repoRoot, config.FileName))
 	if c, ok := d.resolvers[project]; ok && c.stateDir == p.StateDir {
+		if c.cfgStamp != stamp {
+			// Record the stamp even on failure, so a broken edit is reported
+			// once rather than on every request; keep routing by the last
+			// good config until the file changes again.
+			c.cfgStamp = stamp
+			if cfg, err := config.Load(repoRoot); err != nil {
+				logging.Warn("proxy: reloading config for %s: %v; keeping the previous one", project, err)
+			} else {
+				c.resolver.setConfig(cfg)
+			}
+		}
 		return c.resolver, nil
 	}
-	repoRoot := filepath.Dir(p.StateDir)
 	cfg, err := config.Load(repoRoot)
 	if err != nil {
 		return nil, err
@@ -330,7 +359,7 @@ func (d *Daemon) resolverFor(project string) (*Resolver, error) {
 		return nil, err
 	}
 	res := NewResolver(cfg, store)
-	d.resolvers[project] = &cachedResolver{stateDir: p.StateDir, resolver: res}
+	d.resolvers[project] = &cachedResolver{stateDir: p.StateDir, cfgStamp: stamp, resolver: res}
 	return res, nil
 }
 

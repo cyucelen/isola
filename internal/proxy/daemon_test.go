@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -233,6 +234,43 @@ func TestDaemonReleasesUnregisteredPort(t *testing.T) {
 	d.mu.Unlock()
 	if !served {
 		t.Errorf("new port %d not served", newPort)
+	}
+}
+
+// TestDaemonRoutesMovedProxyPortWithoutRestart: after a project moves its
+// proxy_port and re-registers, requests on the new port reach its service. The
+// daemon used to keep the config it first loaded, so the new port 404ed until a
+// restart.
+func TestDaemonRoutesMovedProxyPortWithoutRestart(t *testing.T) {
+	d, reg := newTestDaemon(t)
+	oldPort, newPort := freePort(t), freePort(t)
+	stateDir := addProject(t, reg, "app", false, oldPort)
+	syncOrFail(t, d)
+	if got := get(t, "http://main.app.localhost:"+strconv.Itoa(oldPort)+"/"); got != "app" {
+		t.Fatalf("before move = %q", got)
+	}
+
+	cfgPath := filepath.Join(filepath.Dir(stateDir), ".isola.toml")
+	b, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := strings.Replace(string(b), "proxy_port = "+strconv.Itoa(oldPort), "proxy_port = "+strconv.Itoa(newPort), 1)
+	if err := os.WriteFile(cfgPath, []byte(moved), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Same-length ports leave the size unchanged; make sure the mtime moves.
+	future := time.Now().Add(time.Minute)
+	if err := os.Chtimes(cfgPath, future, future); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Register(registry.Project{Name: "app", StateDir: stateDir, ProxyPorts: []int{newPort}}); err != nil {
+		t.Fatal(err)
+	}
+	syncOrFail(t, d)
+
+	if got := get(t, "http://main.app.localhost:"+strconv.Itoa(newPort)+"/"); got != "app" {
+		t.Errorf("after move = %q", got)
 	}
 }
 

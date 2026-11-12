@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/cyucelen/isola/internal/config"
 	"github.com/cyucelen/isola/internal/git"
@@ -12,7 +13,10 @@ import (
 
 // Resolver maps slug + proxy_port to real backend port.
 type Resolver struct {
-	cfg    *config.Config
+	// cfg is swapped in place when the project's config file changes, so a
+	// moved proxy_port routes without a daemon restart and in-flight on-demand
+	// starts (tracked in starts) are kept.
+	cfg    atomic.Pointer[config.Config]
 	store  *state.FileStore
 	mu     sync.Mutex
 	starts map[string]*pendingStart
@@ -20,8 +24,13 @@ type Resolver struct {
 
 // NewResolver creates a new Resolver.
 func NewResolver(cfg *config.Config, store *state.FileStore) *Resolver {
-	return &Resolver{cfg: cfg, store: store, starts: make(map[string]*pendingStart)}
+	r := &Resolver{store: store, starts: make(map[string]*pendingStart)}
+	r.cfg.Store(cfg)
+	return r
 }
+
+// setConfig replaces the config the resolver routes by.
+func (r *Resolver) setConfig(cfg *config.Config) { r.cfg.Store(cfg) }
 
 // Resolve returns the real backend port for a slug and proxy port.
 func (r *Resolver) Resolve(slug string, proxyPort int) (int, error) {
@@ -32,7 +41,7 @@ func (r *Resolver) Resolve(slug string, proxyPort int) (int, error) {
 func (r *Resolver) resolveTarget(slug string, proxyPort int) (string, string, int, error) {
 	// Find which service uses this proxy port.
 	serviceName := ""
-	for name, svc := range r.cfg.Services {
+	for name, svc := range r.cfg.Load().Services {
 		if svc.ProxyPort == proxyPort {
 			serviceName = name
 			break
