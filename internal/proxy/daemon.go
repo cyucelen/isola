@@ -3,14 +3,17 @@ package proxy
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cyucelen/isola/internal/cert"
@@ -39,16 +42,35 @@ type Daemon struct {
 	reg     *registry.Store
 	certDir string
 
-	mu        sync.Mutex
-	servers   map[int]*http.Server
-	getCert   func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+	mu      sync.Mutex
+	servers map[int]*http.Server
+
+	certMu      sync.Mutex
+	getCert     func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+	httpsWanted atomic.Bool // some registered project has https = true
+
 	resolvers map[string]*cachedResolver // by project name
 	direct    map[string]*directListener
 }
 
 type cachedResolver struct {
 	stateDir string
+	cfgStamp fileStamp // the config file as last loaded
 	resolver *Resolver
+}
+
+// fileStamp identifies a version of a file well enough to notice an edit.
+type fileStamp struct {
+	modTime time.Time
+	size    int64
+}
+
+func stampOf(path string) fileStamp {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fileStamp{}
+	}
+	return fileStamp{modTime: fi.ModTime(), size: fi.Size()}
 }
 
 // NewDaemon creates a Daemon backed by the given registry. Certificates for
@@ -126,26 +148,64 @@ func (d *Daemon) reconcileOrphans() {
 	}
 }
 
-// sync opens a listener for every registered proxy port not already served.
+// sync makes the daemon's listeners match the registry: it opens every
+// registered proxy port not yet served and releases ports no project registers
+// any more, so a moved `proxy_port` frees the old one without a restart. Every
+// port accepts both HTTP and HTTPS (see dualListener), because projects sharing a
+// port may each want a different scheme. The CA is generated as soon as any
+// project wants HTTPS, so `isola up` can find it to trust.
 func (d *Daemon) sync() error {
-	httpsByPort, err := d.reg.HTTPSByPort()
+	projects, err := d.reg.List()
 	if err != nil {
 		return err
 	}
+	ports := map[int]bool{}
+	httpsWanted := false
+	for _, p := range projects {
+		httpsWanted = httpsWanted || p.HTTPS
+		for _, port := range p.ProxyPorts {
+			ports[port] = true
+		}
+	}
+	d.httpsWanted.Store(httpsWanted)
+	if httpsWanted {
+		if _, err := d.certGetter(); err != nil {
+			logging.Warn("proxy: %v", err)
+		}
+	}
+
 	d.mu.Lock()
-	for port, https := range httpsByPort {
+	var released []*http.Server
+	for port, srv := range d.servers {
+		if !ports[port] {
+			released = append(released, srv)
+			delete(d.servers, port)
+			logging.Info("proxy: released :%d (no project uses it)", port)
+		}
+	}
+	for port := range ports {
 		if _, ok := d.servers[port]; ok {
 			continue
 		}
-		if err := d.listenLocked(port, https); err != nil {
+		if err := d.listenLocked(port); err != nil {
 			logging.Warn("proxy: cannot serve port %d: %v", port, err)
 		}
 	}
 	d.mu.Unlock()
+	// Shut down outside the lock: in-flight requests take d.mu to resolve.
+	for _, srv := range released {
+		go shutdown(srv)
+	}
 	return d.syncDirect()
 }
 
-func (d *Daemon) listenLocked(port int, https bool) error {
+func shutdown(srv *http.Server) {
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	_ = srv.Shutdown(ctx)
+}
+
+func (d *Daemon) listenLocked(port int) error {
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
 		Handler:           recoveryMiddleware(d.handler(port)),
@@ -156,27 +216,40 @@ func (d *Daemon) listenLocked(port int, https bool) error {
 	if err != nil {
 		return err
 	}
-	if https {
-		getCert, err := d.certGetter()
-		if err != nil {
-			_ = ln.Close()
-			return err
-		}
-		ln = tls.NewListener(ln, &tls.Config{GetCertificate: getCert})
-	}
+	// Certificates are resolved per handshake, so a port bound before any
+	// project wanted HTTPS serves it once one does. Until then a TLS handshake
+	// is refused, so a stray https:// request never mints a CA nobody asked for.
+	dl := newDualListener(ln, &tls.Config{
+		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			if !d.httpsWanted.Load() {
+				return nil, errNoHTTPSProject
+			}
+			getCert, err := d.certGetter()
+			if err != nil {
+				return nil, err
+			}
+			return getCert(hello)
+		},
+	})
 	d.servers[port] = srv
-	scheme := config.Scheme(https)
-	logging.Info("proxy: serving %s on :%d", scheme, port)
+	logging.Info("proxy: serving http and https on :%d", port)
 	go func() {
-		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(dl); err != nil && err != http.ErrServerClosed {
 			logging.Error("proxy: server on :%d stopped: %v", port, err)
 		}
 	}()
 	return nil
 }
 
+// errNoHTTPSProject refuses a TLS handshake while no registered project has
+// `https = true`.
+var errNoHTTPSProject = errors.New("no isola project on this machine has https enabled")
+
 // certGetter lazily initializes the shared per-SNI certificate minter.
+// It is called from TLS handshakes on any port, so it has its own lock.
 func (d *Daemon) certGetter() (func(*tls.ClientHelloInfo) (*tls.Certificate, error), error) {
+	d.certMu.Lock()
+	defer d.certMu.Unlock()
 	if d.getCert != nil {
 		return d.getCert, nil
 	}
@@ -248,8 +321,9 @@ func (d *Daemon) handler(port int) http.Handler {
 }
 
 // resolverFor returns a Resolver for the named project, building and caching it
-// from the project's own config and state. The cache is invalidated if the
-// project's registered state dir changes.
+// from the project's own config and state. The cache is rebuilt if the project's
+// registered state dir changes, and its config is reloaded when the config file
+// changes (e.g. a moved proxy_port), so neither needs a daemon restart.
 func (d *Daemon) resolverFor(project string) (*Resolver, error) {
 	p, ok, err := d.reg.Lookup(project)
 	if err != nil {
@@ -260,10 +334,22 @@ func (d *Daemon) resolverFor(project string) (*Resolver, error) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	repoRoot := filepath.Dir(p.StateDir)
+	stamp := stampOf(filepath.Join(repoRoot, config.FileName))
 	if c, ok := d.resolvers[project]; ok && c.stateDir == p.StateDir {
+		if c.cfgStamp != stamp {
+			// Record the stamp even on failure, so a broken edit is reported
+			// once rather than on every request; keep routing by the last
+			// good config until the file changes again.
+			c.cfgStamp = stamp
+			if cfg, err := config.Load(repoRoot); err != nil {
+				logging.Warn("proxy: reloading config for %s: %v; keeping the previous one", project, err)
+			} else {
+				c.resolver.setConfig(cfg)
+			}
+		}
 		return c.resolver, nil
 	}
-	repoRoot := filepath.Dir(p.StateDir)
 	cfg, err := config.Load(repoRoot)
 	if err != nil {
 		return nil, err
@@ -273,7 +359,7 @@ func (d *Daemon) resolverFor(project string) (*Resolver, error) {
 		return nil, err
 	}
 	res := NewResolver(cfg, store)
-	d.resolvers[project] = &cachedResolver{stateDir: p.StateDir, resolver: res}
+	d.resolvers[project] = &cachedResolver{stateDir: p.StateDir, cfgStamp: stamp, resolver: res}
 	return res, nil
 }
 

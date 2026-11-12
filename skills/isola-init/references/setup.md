@@ -240,12 +240,12 @@ etc.). Turn it on with a `[proxy]` table:
 https = true
 ```
 
-Then apply it. **isola does not hot-reload a running proxy or running services**,
-so after changing `[proxy]` (or any config) you must restart, or the change is
-silently ignored:
+Then apply it. **isola does not hot-reload running services**, so after changing
+`[proxy]` (or any config) restart them, or the change is silently ignored. The
+shared proxy picks up the new setting on its own once `isola up` runs:
 
 ```bash
-isola down && isola proxy stop && isola up
+isola down && isola up
 ```
 
 On the first HTTPS `isola up`, isola generates its own CA. With `auto_trust`
@@ -314,8 +314,7 @@ Cover:
   isola up`. Remove it with `git worktree remove ../<name>` and isola tears down
   the leftover services and database.
 - **HTTPS, if they want it.** Offer to turn it on. You can do the config yourself:
-  set `https = true` under `[proxy]` and restart (`isola down && isola proxy stop
-  && isola up`). Then guide the one manual step you can't do for them: trusting
+  set `https = true` under `[proxy]` and restart (`isola down && isola up`). Then guide the one manual step you can't do for them: trusting
   the dev CA with `isola trust` (a single `sudo` prompt), or accepting the prompt
   on the first interactive `up`. Tell them to **restart the browser afterwards**:
   browsers read the system trust store at startup, so one already open when the CA

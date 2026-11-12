@@ -171,9 +171,6 @@ var upCmd = &cobra.Command{
 					totalFailed++
 				}
 			} else {
-				// Capture the project's previous registration before overwriting
-				// it, so we can tell whether the proxy scheme or ports changed.
-				prev, hadPrev, _ := reg.Lookup(cfg.Project)
 				if regErr := reg.Register(registry.Project{
 					Name:       cfg.Project,
 					StateDir:   store.Dir(),
@@ -192,13 +189,9 @@ var upCmd = &cobra.Command{
 					case started:
 						logging.Info("✓ proxy started")
 					default:
+						// A running daemon picks up new ports and either scheme on
+						// its own, so a config change needs no restart.
 						logging.Verbose("proxy already running")
-						// A running shared daemon binds each port with the scheme
-						// it read at startup; it won't pick up a scheme/port change
-						// for this project until it is restarted.
-						if hadPrev && proxyConfigChanged(prev, cfg) {
-							logging.Warn("proxy config changed but the shared proxy is already running with the old settings; restart it with `isola proxy stop` then `isola up` to apply.")
-						}
 						warnStaleProxyBuild(reg)
 					}
 
@@ -285,35 +278,6 @@ func ensureHTTPSTrust(caPath string) {
 		return
 	}
 	logging.Info("✓ HTTPS CA trusted. Restart your browser so it picks up the new CA; already-open browsers keep warning until fully quit and reopened.")
-}
-
-// proxyConfigChanged reports whether the proxy-relevant config (HTTPS scheme or
-// the set of proxy ports) differs from a project's previous registration, i.e.
-// whether an already-running shared daemon would be serving stale settings.
-func proxyConfigChanged(prev registry.Project, c *config.Config) bool {
-	if prev.HTTPS != c.Proxy.HTTPS {
-		return true
-	}
-	return !sameInts(prev.ProxyPorts, c.ProxyPorts())
-}
-
-func sameInts(a, b []int) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	seen := make(map[int]int, len(a))
-	for _, v := range a {
-		seen[v]++
-	}
-	for _, v := range b {
-		seen[v]--
-	}
-	for _, n := range seen {
-		if n != 0 {
-			return false
-		}
-	}
-	return true
 }
 
 func init() {

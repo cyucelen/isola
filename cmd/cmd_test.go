@@ -9,7 +9,6 @@ import (
 	"github.com/cyucelen/isola/internal/config"
 	"github.com/cyucelen/isola/internal/git"
 	"github.com/cyucelen/isola/internal/logging"
-	"github.com/cyucelen/isola/internal/registry"
 	"github.com/cyucelen/isola/internal/state"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -420,33 +419,5 @@ func TestDownAll(t *testing.T) {
 	rootCmd.SetArgs([]string{"down", "--all"})
 	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("down --all: %v", err)
-	}
-}
-
-func TestProxyConfigChanged(t *testing.T) {
-	cfg := &config.Config{
-		Services: map[string]config.ServiceConfig{
-			"api": {ProxyPort: 8000},
-			"web": {ProxyPort: 3000},
-		},
-	}
-	cfg.Proxy.HTTPS = true // ProxyPorts() = {8000, 3000}
-
-	cases := []struct {
-		name string
-		prev registry.Project
-		want bool
-	}{
-		{"identical", registry.Project{HTTPS: true, ProxyPorts: []int{3000, 8000}}, false},
-		{"scheme changed", registry.Project{HTTPS: false, ProxyPorts: []int{3000, 8000}}, true},
-		{"ports changed", registry.Project{HTTPS: true, ProxyPorts: []int{3000}}, true},
-		{"same ports different order", registry.Project{HTTPS: true, ProxyPorts: []int{8000, 3000}}, false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := proxyConfigChanged(c.prev, cfg); got != c.want {
-				t.Errorf("proxyConfigChanged = %v, want %v", got, c.want)
-			}
-		})
 	}
 }

@@ -8,12 +8,12 @@ processes from scratch) is the separate **isola-init** skill.
 > affected processes. After editing `.isola.toml`:
 >
 > ```bash
-> isola down && isola up          # services (picks up command/env/service changes)
-> isola proxy stop && isola up     # ALSO needed after any [proxy] change
+> isola down && isola up          # services (picks up command/env/service/[proxy] changes)
 > ```
 >
-> The shared proxy keeps the config it started with; `isola up` warns when the
-> running proxy differs from the file.
+> The shared proxy applies `[proxy]` and `proxy_port` changes on its own once
+> `isola up` re-registers the project. Only if `isola up` warns that the proxy
+> runs an older isola, restart it once with `isola proxy stop && isola up`.
 
 ## `[services.<name>]`
 
@@ -101,7 +101,8 @@ One machine-wide daemon; these keys are per project. Fields: `enabled` (default
 `auto_trust` (default `true`; with `https`, installs isola's CA on the first
 interactive `up`). Enabling `https` needs a CA-trust step for non-browser clients
 (Node/Bun especially) — see **references/dev.md** and `${proxy.ca_cert}`. Remember
-the restart note above applies to every `[proxy]` edit.
+the restart note above applies to every `[proxy]` edit. Every proxy port serves
+both schemes, so projects sharing a `proxy_port` may differ in `https`.
 
 ## `[worktrees."<branch>"]` (top-level)
 

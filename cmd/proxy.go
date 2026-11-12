@@ -25,8 +25,10 @@ var proxyStartCmd = &cobra.Command{
 	Long: `Run the machine-wide reverse proxy in the foreground.
 
 It binds the union of every registered project's proxy ports and routes each
-request by its <branch-slug>.<project>.localhost host to that project's backend,
-serving HTTPS on ports where any project enabled it. It runs until interrupted
+request by its <branch-slug>.<project>.localhost host to that project's backend.
+Every port answers both HTTP and HTTPS (HTTPS once any project enables it), and
+registry changes (new ports, moved ports, https on or off) apply within a second
+without a restart. It runs until interrupted
 with Ctrl+C (SIGINT) or SIGTERM. 'isola up' normally starts it for you in the
 background.`,
 	// The daemon is machine-wide; it needs no repo or config of its own.

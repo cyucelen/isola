@@ -68,9 +68,10 @@ If state looks stale after deleting worktrees, run `isola down --prune`.
   the service is ignoring `$PORT`, still starting, or crashed (check
   `isola logs`). A **404** means an unknown project or an unrouted bare
   `<slug>.localhost`.
-- **Edited `[proxy]` and nothing changed?** The shared daemon keeps the config it
-  started with. After changing `[proxy]` (`https`, ports), restart it with
-  `isola proxy stop && isola up`; `isola up` warns when the running proxy differs.
+- **Edited `[proxy]` and nothing changed?** The shared proxy applies `https` and
+  `proxy_port` changes on the next `isola up`, but services keep the URLs and env
+  they started with: run `isola down && isola up`. If `isola up` warns that the
+  proxy runs an older isola, restart it once with `isola proxy stop && isola up`.
 
 ## HTTPS certificate warnings
 

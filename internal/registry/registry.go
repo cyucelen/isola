@@ -246,35 +246,23 @@ func (s *Store) SetDaemon(d Daemon) error {
 	})
 }
 
-// HTTPSByPort returns, for each registered proxy port, whether any project using
-// it wants HTTPS. A port with mixed settings resolves to HTTPS (the superset).
-func (s *Store) HTTPSByPort() (map[int]bool, error) {
+// Ports returns the sorted union of proxy ports across all registered projects.
+// Scheme is not per port: the daemon serves HTTP and HTTPS on every port, since
+// projects sharing one may each choose differently.
+func (s *Store) Ports() ([]int, error) {
 	projects, err := s.List()
 	if err != nil {
 		return nil, err
 	}
-	m := map[int]bool{}
+	seen := map[int]bool{}
+	var ports []int
 	for _, p := range projects {
 		for _, port := range p.ProxyPorts {
-			if p.HTTPS {
-				m[port] = true
-			} else if _, ok := m[port]; !ok {
-				m[port] = false
+			if !seen[port] {
+				seen[port] = true
+				ports = append(ports, port)
 			}
 		}
-	}
-	return m, nil
-}
-
-// Ports returns the sorted union of proxy ports across all registered projects.
-func (s *Store) Ports() ([]int, error) {
-	byPort, err := s.HTTPSByPort()
-	if err != nil {
-		return nil, err
-	}
-	ports := make([]int, 0, len(byPort))
-	for port := range byPort {
-		ports = append(ports, port)
 	}
 	sort.Ints(ports)
 	return ports, nil
