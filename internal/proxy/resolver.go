@@ -29,6 +29,12 @@ func NewResolver(cfg *config.Config, store *state.FileStore) *Resolver {
 	return r
 }
 
+// bindsAll reports whether service's direct listener should accept connections
+// on every interface. It reads the live config, so an edit rebinds on the next sync.
+func (r *Resolver) bindsAll(service string) bool {
+	return r.cfg.Load().Services[service].BindsAll()
+}
+
 // setConfig replaces the config the resolver routes by.
 func (r *Resolver) setConfig(cfg *config.Config) { r.cfg.Store(cfg) }
 

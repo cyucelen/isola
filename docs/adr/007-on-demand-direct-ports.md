@@ -4,6 +4,10 @@
 
 Accepted
 
+> **Update:** direct listeners stay loopback-only by default, and a per-service
+> `bind = "all"` opts a service into every interface. See
+> [ADR-008](008-direct-port-bind.md).
+
 ## Context
 
 An idle service cannot receive a direct connection unless another process owns

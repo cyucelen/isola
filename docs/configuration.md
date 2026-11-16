@@ -72,6 +72,7 @@ services marked `on_demand = true`.
 | `proxy_port` | int          | no       | Port the reverse proxy listens on for this service. Needs a `port_range` (the backend to route to); omit both for a background process |
 | `env`        | table        | no       | Environment for this service; values may reference `${...}` (see below)         |
 | `env_file`   | string       | no       | Env-file name for this service (relative to `dir`); overrides [`[env_file]`](#env_file) `path`; `""` opts out |
+| `bind`       | string       | no       | Interfaces the daemon's direct listener accepts on: `"loopback"` (default) or `"all"`, which lets other devices on your network reach it. Needs `on_demand = true` and a `port_range` (see [reaching services from other devices](#reaching-services-from-other-devices)) |
 
 A service takes one of three shapes, by which port fields you set:
 
@@ -147,7 +148,8 @@ port themselves, and direct connections cannot wake idle services.
 For on-demand services managed by the daemon, `isola ls`, `direct_url`, and
 `${services.<name>.port}` keep the stable public port from `port_range`. The
 service must bind `$PORT`, which is a separate private port assigned at startup.
-The daemon relays direct TCP traffic on IPv4/IPv6 loopback, including HTTP and
+The daemon relays direct TCP traffic on IPv4/IPv6 loopback (or every interface,
+with [`bind = "all"`](#reaching-services-from-other-devices)), including HTTP and
 WebSocket upgrades. Direct URLs remain plain HTTP even if qualified URLs use
 HTTPS. `isola up` waits for these public listeners to be ready; stopping the
 shared proxy interrupts direct access until it is restarted.
@@ -164,6 +166,45 @@ Service output is in `isola logs`; setup triggered by the proxy is logged to
 shell environment; use service `env` entries for project-specific values.
 After upgrading from a version without on-demand support, restart the shared
 proxy with `isola proxy stop` followed by `isola up`.
+
+#### Reaching services from other devices
+
+The daemon's direct listeners accept loopback connections only, so a simulator
+on the same machine reaches an on-demand service but a physical phone on the
+same Wi-Fi does not. Set `bind = "all"` on each service those devices call:
+
+```toml
+[services.api]
+command = "pnpm run dev --port $PORT"
+on_demand = true
+port_range = { min = 4000, max = 4099 }
+bind = "all"
+```
+
+The daemon then listens on every interface (`0.0.0.0` and `::`), so devices on
+the network reach the service at `http://<this machine's LAN IP>:<port>`.
+Loopback, `direct_url`, and sibling refs keep working unchanged. Only the
+services that set `bind = "all"` are exposed, and only their direct ports. Use
+it on networks you trust; it exposes more than the same service binding all
+interfaces itself would:
+
+- **Every worktree, running or idle.** Each worktree where the service is armed
+  has its own port open, and any device that can reach the machine (on any
+  network, including VPNs and public Wi-Fi) starts that worktree's service by
+  connecting to it.
+- **Network clients look local.** The daemon forwards every connection from
+  `127.0.0.1`, so the service cannot tell a phone from a local client. Do not
+  set `bind = "all"` on a service that trusts loopback requests more (debug
+  pages, admin routes, skipped auth).
+
+The daemon reloads the setting within a second of saving `.isola.toml`, with no
+`isola up` or proxy restart; connections open on the changed port are dropped.
+An invalid value keeps the previous setting and is reported in
+`~/.isola/logs/proxy.log` (and by the next `isola up`).
+`bind` applies only to the daemon's direct listeners: proxy URLs
+(`proxy_port`) stay loopback-only, and with `[proxy].enabled = false` the
+service binds its own port and `bind` has no effect. If the macOS firewall is
+on, it may ask once whether `isola` may accept incoming connections; allow it.
 
 ### Env references
 

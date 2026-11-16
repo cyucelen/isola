@@ -82,6 +82,32 @@ func TestValidate(t *testing.T) {
 				},
 			}
 		}, "outside range"},
+		{"bind all on an on-demand service", func(c *Config) {
+			svc := c.Services["web"]
+			svc.OnDemand, svc.Bind = true, BindAll
+			c.Services["web"] = svc
+		}, ""},
+		{"bind loopback explicitly", func(c *Config) {
+			svc := c.Services["web"]
+			svc.Bind = BindLoopback
+			c.Services["web"] = svc
+		}, ""},
+		{"bind all without on_demand", func(c *Config) {
+			svc := c.Services["web"]
+			svc.Bind = BindAll
+			c.Services["web"] = svc
+		}, `bind = "all" needs on_demand = true and a port_range`},
+		{"bind all without a port", func(c *Config) {
+			svc := c.Services["web"]
+			svc.PortRange, svc.ProxyPort = PortRange{}, 0
+			svc.OnDemand, svc.Bind = true, BindAll
+			c.Services["web"] = svc
+		}, `bind = "all" needs on_demand = true and a port_range`},
+		{"unknown bind value", func(c *Config) {
+			svc := c.Services["web"]
+			svc.OnDemand, svc.Bind = true, "0.0.0.0"
+			c.Services["web"] = svc
+		}, `bind must be "loopback" or "all"`},
 	}
 
 	for _, tt := range tests {

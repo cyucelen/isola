@@ -197,7 +197,9 @@ startup until the next `up`, and cancels pending service setup. Internal service
 with a port also wake on direct requests; background services without a port
 are started explicitly. Direct wake-up requires the shared daemon. Services stay
 running once started. See [on-demand services](docs/configuration.md#on-demand-services)
-for setup behavior and proxy requirements.
+for setup behavior and proxy requirements. Their direct ports listen on loopback
+only; add `bind = "all"` to a service so a phone on the same Wi-Fi can reach it at
+`<your LAN IP>:<port>` (see [reaching services from other devices](docs/configuration.md#reaching-services-from-other-devices)).
 
 ## Worktree setup automation
 
