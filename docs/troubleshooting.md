@@ -41,6 +41,23 @@ failures and their fixes.
   `ERR_CERT_COMMON_NAME_INVALID` for a worktree whose services are running, check
   the first label of the host against `isola ls`, and that it is at most 63 bytes.
 
+## A phone on the same Wi-Fi cannot reach a service
+
+On-demand services are fronted by the shared daemon, which listens on loopback
+only by default: simulators on your machine connect, physical devices do not.
+
+- Add `bind = "all"` to the service in `.isola.toml` (it needs `on_demand = true`
+  and a `port_range`); the daemon picks it up within a second. See
+  [reaching services from other devices](configuration.md#reaching-services-from-other-devices).
+- Point the device at `http://<your machine's LAN IP>:<port>`, using the port
+  `isola ls` shows (not `$PORT`, which is the service's private port).
+- If `isola up` warns that the proxy runs an older isola, it ignores `bind`;
+  restart it with `isola proxy stop && isola up`.
+- On macOS with the firewall on, allow incoming connections for `isola` (System
+  Settings > Network > Firewall > Options).
+- Guest or office networks with client isolation block device-to-device
+  traffic regardless of isola.
+
 ## Server-side calls between services
 
 Browsers resolve `*.localhost` on every OS, so the user-facing app always loads.

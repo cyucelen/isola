@@ -25,6 +25,8 @@ type directListener struct {
 	listeners       []net.Listener
 	ctx             context.Context
 	cancel          context.CancelFunc
+	// all binds every interface (bind = "all") instead of loopback only.
+	all bool
 }
 
 func directActive(ss *state.ServiceState) bool {
@@ -48,11 +50,14 @@ func (d *Daemon) syncDirect() error {
 		if err != nil {
 			return err
 		}
+		// bind comes from the live config, so editing it rebinds on the next sync.
+		cfg := res.cfg.Load()
 		for branch, services := range st.Services {
 			for service, ss := range services {
 				if directActive(ss) {
 					key := project.StateDir + "\x00" + state.PortKey(branch, service)
-					desired[key] = &directListener{port: ss.Port, resolver: res, branch: branch, service: service}
+					all := cfg.Services[service].BindsAll()
+					desired[key] = &directListener{port: ss.Port, all: all, resolver: res, branch: branch, service: service}
 				}
 			}
 		}
@@ -61,7 +66,7 @@ func (d *Daemon) syncDirect() error {
 	defer d.mu.Unlock()
 	for key, active := range d.direct {
 		want := desired[key]
-		if want == nil || want.port != active.port {
+		if want == nil || want.port != active.port || want.all != active.all {
 			active.close()
 			delete(d.direct, key)
 		}
@@ -95,13 +100,20 @@ func (d *Daemon) syncDirect() error {
 	return nil
 }
 
+// listen binds the IPv4 and (when available) IPv6 loopback addresses, or the
+// unspecified addresses for bind = "all", which also cover loopback.
 func (l *directListener) listen() error {
-	v4, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(l.port)))
+	host4, host6 := "127.0.0.1", "::1"
+	if l.all {
+		host4, host6 = "0.0.0.0", "::"
+	}
+	v4, err := net.Listen("tcp4", net.JoinHostPort(host4, strconv.Itoa(l.port)))
 	if err != nil {
 		return err
 	}
 	l.listeners = append(l.listeners, v4)
-	v6, err := net.Listen("tcp6", net.JoinHostPort("::1", strconv.Itoa(l.port)))
+	// tcp6 sets IPV6_V6ONLY, so [::] does not collide with the 0.0.0.0 listener.
+	v6, err := net.Listen("tcp6", net.JoinHostPort(host6, strconv.Itoa(l.port)))
 	switch {
 	case err == nil:
 		l.listeners = append(l.listeners, v6)

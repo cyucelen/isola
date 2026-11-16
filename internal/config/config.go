@@ -228,7 +228,21 @@ type ServiceConfig struct {
 	// EnvFile overrides the env-file name for this service (relative to its dir).
 	// Unset inherits [env_file].path; "" opts this service out. See EnvFileConfig.
 	EnvFile *string `toml:"env_file,omitempty"`
+	// Bind selects the interfaces the daemon's direct listener for an on-demand
+	// service accepts connections on: BindLoopback (default) or BindAll, which
+	// lets other devices on the network (a phone on the same Wi-Fi) reach it.
+	Bind string `toml:"bind,omitempty"`
 }
+
+// Values for ServiceConfig.Bind.
+const (
+	BindLoopback = "loopback"
+	BindAll      = "all"
+)
+
+// BindsAll reports whether the service's direct listener accepts connections
+// on every interface rather than loopback only.
+func (s ServiceConfig) BindsAll() bool { return s.Bind == BindAll }
 
 // PortRange defines the range of ports available for allocation.
 type PortRange struct {
@@ -318,6 +332,17 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("services %q and %q have the same proxy_port %d", existing, name, svc.ProxyPort)
 			}
 			proxyPorts[svc.ProxyPort] = name
+		}
+		switch svc.Bind {
+		case "", BindLoopback:
+		case BindAll:
+			// Only the daemon's direct listener honors bind; any other service
+			// binds its own port, so the setting would silently do nothing.
+			if !svc.OnDemand || !hasRange {
+				return fmt.Errorf("service %q: bind = %q needs on_demand = true and a port_range", name, BindAll)
+			}
+		default:
+			return fmt.Errorf("service %q: bind must be %q or %q, got %q", name, BindLoopback, BindAll, svc.Bind)
 		}
 	}
 

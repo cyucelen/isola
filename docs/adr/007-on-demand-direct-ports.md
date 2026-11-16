@@ -4,6 +4,10 @@
 
 Accepted
 
+> **Update:** direct listeners stay loopback-only by default, and a per-service
+> `bind = "all"` opts a service into every interface. See
+> [Listener interfaces](#listener-interfaces) below.
+
 ## Context
 
 An idle service cannot receive a direct connection unless another process owns
@@ -67,3 +71,48 @@ race with unrelated external processes between allocation and the child binding.
 Stopping during service setup now cancels that setup instead of waiting for it
 to finish. A failed or canceled start leaves the service stopped; an explicit
 start or another `up` can retry it. Root setup remains a worktree-wide step.
+
+## Listener interfaces
+
+### Context
+
+Before on-demand, a service bound its own port on whatever interface it chose;
+many dev servers bind every interface, so a physical phone on the same Wi-Fi
+reached them at `<LAN IP>:<port>`. Once the daemon owns the public port, the
+interface is isola's choice, and the original loopback-only binding cut those
+devices off while simulators kept working.
+
+### Decision
+
+- Loopback stays the default. The daemon is machine-wide and starts processes
+  on request, so a listener reachable from the network lets any peer on any
+  of the machine's networks (VPN, public Wi-Fi) run a project's setup and
+  command. That should be the exception a repo asks for, not the baseline.
+- Opt in per service with `bind = "all"` (default `"loopback"`), not with a
+  `[proxy]` key. The daemon serves every project, so a proxy-wide key set by one
+  repo would expose every project's on-demand services, and even within one
+  repo it would expose services that only siblings call. A per-service key
+  matches what the service itself would have bound.
+- `bind = "all"` listens on the unspecified addresses, `0.0.0.0` (tcp4) and
+  `::` (tcp6, IPv6-only so the two do not collide), not on a specific LAN
+  address. That matches a dev server binding all interfaces, includes loopback
+  so local clients and `direct_url` keep working, and survives the LAN address
+  changing (DHCP renewals, switching networks) without tracking interfaces.
+  Hosts without IPv6 keep the IPv4 listener, as on loopback.
+- The daemon reads `bind` from the project's live config on each sync, not from
+  state, so an edit applies within a second without `up` or a restart. A
+  changed value is handled like a changed port: the listener and its open
+  connections close and the new one binds.
+- `bind` is a config error unless the service is `on_demand` with a
+  `port_range`; anywhere else the service binds its own port and the key could
+  not take effect.
+
+### Consequences
+
+Physical devices can reach and wake opted-in services again, at the exposure
+those services had when they bound their own ports, applied to every worktree's
+port for the service. An idle service with `bind = "all"` now wakes on network
+traffic as well as local traffic. Proxy URLs (`proxy_port`) remain
+loopback-only, and an older daemon ignores `bind` until it is restarted. On
+macOS with the firewall enabled, the `isola` binary, not the service, is the
+process that must be allowed to accept incoming connections.
