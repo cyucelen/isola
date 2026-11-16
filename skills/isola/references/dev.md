@@ -30,7 +30,8 @@ isola down                    # stop the current worktree's services
 isola down --service frontend # stop just one service
 isola down --service api,frontend # stop a selected list
 isola down --all              # stop everything
-isola destroy                 # stop the current worktree AND drop its per-worktree databases
+isola destroy                 # stop the current worktree, drop its databases, delete its logs + state
+isola destroy --keep-logs     # same, but keep its service logs
 ```
 
 Both commands accept comma-separated names or repeated flags:
@@ -140,13 +141,19 @@ isola logs <worktree>      # a specific worktree
 
 Git has no worktree-removal hook, so isola reconciles removed worktrees
 **automatically**: on the next `isola up` and on the shared proxy's background
-timer (~30s) it stops a removed worktree's leftover services and drops the
-per-worktree databases it provisioned (only resources isola created). To force
-it immediately:
+timer (~30s) it stops a removed worktree's leftover services, drops the
+per-worktree databases it provisioned (only resources isola created), and
+deletes its logs and state under `.isola/`. To force it immediately:
 
 ```bash
 isola down --prune           # reconcile removed worktrees now
 ```
 
-To tear down the **current** worktree on demand (stop its services + drop its
-databases), use `isola destroy`.
+To tear down the **current** worktree on demand (stop its services, drop its
+databases, delete its logs and state under `.isola/`), use `isola destroy`. Add
+`--keep-logs` to keep its service logs for a post-mortem; they stay until the
+worktree is removed, then reconcile deletes them. Logs are also kept while
+another live worktree shares the host label. A service that fails to stop, or a
+database that fails to drop, keeps its record so a rerun finishes the job.
+Files inside the worktree (env files, copied files) and `~/.isola` are never
+touched.

@@ -20,7 +20,7 @@ isola up [--all]              # start default services, arm on-demand services, 
 isola up --service X,Y        # start selected services immediately, including on-demand services
 isola down [--all] [--service X,Y]  # stop selected services, or all if omitted
 isola down --prune            # tear down removed worktrees
-isola destroy                  # stop + drop the current worktree's services and databases
+isola destroy [--keep-logs]    # stop + drop the current worktree's services and databases, delete its logs + state
 isola ls [--json]              # worktrees, services, ports, status, URLs
 isola dash                     # interactive TUI
 isola proxy start              # run the proxy manually (up auto-starts it); [proxy] enabled=false to opt out; HTTPS via [proxy] https=true

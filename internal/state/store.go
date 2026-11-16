@@ -1,6 +1,7 @@
 package state
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -192,6 +193,14 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 // Dir returns the state directory path.
 func (s *FileStore) Dir() string {
 	return s.dir
+}
+
+// ServiceLockPath returns the lock file WithServiceLock holds for a branch's
+// service. Lock files are never removed while a service may use them; worktree
+// teardown deletes them once the services are stopped.
+func (s *FileStore) ServiceLockPath(branch, service string) string {
+	key := sha256.Sum256([]byte(PortKey(branch, service)))
+	return filepath.Join(s.dir, fmt.Sprintf("service-%x.lock", key))
 }
 
 // SetServiceState updates the state for a specific branch and service.

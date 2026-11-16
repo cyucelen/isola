@@ -234,10 +234,17 @@ worktrees only, and does nothing without a `.isola.toml`.
 ### When a worktree is removed
 
 Git has no worktree-removal hook, so isola reconciles: a removed worktree is torn
-down automatically, its services stopped and the per-worktree databases it
-provisioned dropped, on the next `isola up` and by the shared proxy in the
-background. It only ever drops resources isola created. `isola down --prune` runs
-the same teardown on demand, and `isola destroy` tears down the current worktree.
+down automatically, its services stopped, the per-worktree databases it
+provisioned dropped, and its logs and state in `.isola/` deleted, on the next
+`isola up` and by the shared proxy in the background. It only ever drops
+resources isola created. `isola down --prune` runs the same teardown on demand.
+
+`isola destroy` tears down the current worktree the same way while it still
+exists. Its logs are kept if you pass `--keep-logs`, or while another live
+worktree's branch maps to the same host label (the label names the log files).
+Logs kept either way are deleted by reconcile once no live worktree uses their
+label, for example after you remove the worktree. A service that fails to stop,
+or a database that fails to drop, keeps its record so the next run retries it.
 
 ## Environment Variables
 
@@ -317,7 +324,7 @@ case.
 | `isola down --service api,web` | Stop selected services                                                                |
 | `isola down --all`      | Stop services for all worktrees                                                              |
 | `isola down --prune`    | Stop services, then drop deleted worktrees' state and databases                              |
-| `isola destroy`         | Stop the current worktree's services and drop its database (opposite of `up`)                |
+| `isola destroy`         | Stop the current worktree's services, drop its database, delete its logs and state (`--keep-logs` keeps logs) |
 | `isola ls`              | List all worktrees, services, ports, status, and URLs                                        |
 | `isola logs [worktree]` | Tail a worktree's service logs                                                               |
 | `isola accessory`       | Manage per-worktree databases: `ls` (`--json`), `up`, `reset`, `drop`                        |
@@ -434,7 +441,10 @@ Automatic wake-up on direct URLs requires the shared daemon.
 Two places. **Per repository**, in `.isola/` at the main worktree root: runtime
 state (service PIDs, port assignments, accessory handles) in `.isola/state.json`
 (file-locked for concurrent access), and service logs at
-`.isola/logs/<branch-slug>.<service>.log`.
+`.isola/logs/<branch-slug>.<service>.log`. A worktree's logs and state entries
+are deleted when `isola destroy` or reconcile tears it down (see
+[When a worktree is removed](#when-a-worktree-is-removed) for when logs are
+kept).
 
 **Machine-wide**, in `~/.isola/`: the shared proxy's registry (`registry.json`)
 and daemon state (`proxy.json`), the proxy log (`logs/proxy.log`), and the

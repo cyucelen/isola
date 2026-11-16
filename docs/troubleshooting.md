@@ -7,6 +7,8 @@ failures and their fixes.
 ## Service fails to start
 
 - Check the log file at `.isola/logs/<branch-slug>.<service>.log` for error output.
+  `isola destroy` deletes it (pass `--keep-logs` to keep it until the worktree
+  is removed), as does the reconcile that tears down a removed worktree.
 - Verify the `command` in `.isola.toml` runs correctly when executed manually.
 - Ensure the working `dir` exists relative to the worktree root.
 - `not started: accessory "<name>" could not be brought up` means the service

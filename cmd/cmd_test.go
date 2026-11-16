@@ -101,6 +101,7 @@ func resetRootCmd() {
 	logsFollow = false
 	logsTail = 50
 	logsService = ""
+	destroyKeepLogs = false
 
 	// Reset proxy start flags.
 	proxyStartCmd.Flags().VisitAll(func(f *pflag.Flag) {
@@ -109,7 +110,7 @@ func resetRootCmd() {
 
 	// Local command flags keep their value across Execute() calls in one test
 	// binary, so a --json passed by one test would leak into the next.
-	for _, c := range []*cobra.Command{lsCmd, accessoryLsCmd, upCmd, downCmd} {
+	for _, c := range []*cobra.Command{lsCmd, accessoryLsCmd, upCmd, downCmd, destroyCmd} {
 		c.Flags().VisitAll(func(f *pflag.Flag) {
 			if slice, ok := f.Value.(pflag.SliceValue); ok {
 				_ = slice.Replace(nil)

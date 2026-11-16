@@ -118,10 +118,12 @@ Behavior:
 - **On `isola down`**: services stop; the database or logical DB is kept for next
   time.
 - **On worktree removal**: isola reconciles automatically (on the next `isola up`
-  and on the shared proxy's ~30s timer) and drops the databases it provisioned.
-  `isola down --prune` forces the same teardown now; `isola destroy` tears down
-  the current worktree only. None of these ever drop `clone_from` or the server
-  database.
+  and on the shared proxy's ~30s timer), drops the databases it provisioned,
+  and deletes the worktree's logs and state under `.isola/`. `isola down
+  --prune` forces the same teardown now; `isola destroy` tears down the current
+  worktree only (`--keep-logs` keeps its logs). None of these ever drop
+  `clone_from` or the server database. An accessory that fails to drop keeps
+  its record, so a later drop or reconcile retries it.
 
 ## Manage out of band
 
