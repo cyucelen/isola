@@ -41,6 +41,9 @@ func (d *Daemon) syncDirect() error {
 		return err
 	}
 	desired := map[string]*directListener{}
+	// Listeners whose bind came from the main checkout because the owning
+	// worktree's config is unavailable.
+	unowned := map[string]bool{}
 	for _, project := range projects {
 		res, err := d.resolverFor(project.Name)
 		if err != nil {
@@ -54,7 +57,9 @@ func (d *Daemon) syncDirect() error {
 			for service, ss := range services {
 				if directActive(ss) {
 					key := project.StateDir + "\x00" + state.PortKey(branch, service)
-					desired[key] = &directListener{port: ss.Port, bindAll: res.bindsAll(service), resolver: res, branch: branch, service: service}
+					bindAll, owned := res.bindsAll(branch, service)
+					desired[key] = &directListener{port: ss.Port, bindAll: bindAll, resolver: res, branch: branch, service: service}
+					unowned[key] = !owned
 				}
 			}
 		}
@@ -63,6 +68,11 @@ func (d *Daemon) syncDirect() error {
 	defer d.mu.Unlock()
 	for key, active := range d.direct {
 		want := desired[key]
+		if want != nil && unowned[key] {
+			// The worktree is gone or its config never loaded: keep a working
+			// listener as it is rather than flap it to the main checkout's bind.
+			want.bindAll = active.bindAll
+		}
 		if want == nil || want.port != active.port || want.bindAll != active.bindAll {
 			active.close()
 			delete(d.direct, key)

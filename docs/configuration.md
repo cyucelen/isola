@@ -197,10 +197,12 @@ interfaces itself would:
   set `bind = "all"` on a service that trusts loopback requests more (debug
   pages, admin routes, skipped auth).
 
-The daemon reloads the setting within a second of saving `.isola.toml`, with no
-`isola up` or proxy restart; connections open on the changed port are dropped.
-An invalid value keeps the previous setting and is reported in
-`~/.isola/logs/proxy.log` (and by the next `isola up`).
+Each worktree's direct ports follow `bind` in that worktree's own
+`.isola.toml`, so a branch can turn it on (or off) before it merges, without
+changing other worktrees. The daemon reloads the setting within a second of
+saving the file, with no `isola up` or proxy restart; connections open on the
+changed port are dropped. An invalid value keeps the previous setting and is
+reported in `~/.isola/logs/proxy.log` (and by the next `isola up`).
 `bind` applies only to the daemon's direct listeners: proxy URLs
 (`proxy_port`) stay loopback-only, and with `[proxy].enabled = false` the
 service binds its own port and `bind` has no effect. If the macOS firewall is
@@ -410,7 +412,10 @@ on the machine has `https = true`), so two projects can share a `proxy_port`
 with different `https` settings. An `https = true` project is therefore also
 reachable over plain `http://`; there is no redirect. The running proxy picks up
 `[proxy]` and `proxy_port` changes on the next `isola up` without a restart, and
-releases ports no project uses any more. Services still need `isola down && isola up`
+releases ports no project uses any more. The service a request reaches is looked
+up in the requested worktree's own `.isola.toml`, so a `proxy_port` a branch
+adds or moves routes to that branch's service; the daemon binds the ports the
+project registered at its most recent `isola up`. Services still need `isola down && isola up`
 after changing `https`, since their injected URLs and `${proxy.ca_cert}` are set
 when they start. A proxy started by an older isola must be restarted once
 (`isola proxy stop && isola up`); `isola up` warns when that is the case.

@@ -2,14 +2,13 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"path/filepath"
 	"strconv"
 	"time"
 
-	"github.com/cyucelen/isola/internal/config"
-	"github.com/cyucelen/isola/internal/git"
 	"github.com/cyucelen/isola/internal/logging"
 	"github.com/cyucelen/isola/internal/port"
 	"github.com/cyucelen/isola/internal/process"
@@ -70,26 +69,19 @@ func (r *Resolver) wake(ctx context.Context, branch, service string, backend int
 
 func (r *Resolver) startOnDemand(branch, service string, backend int) error {
 	root := filepath.Dir(r.store.Dir())
-	trees, err := git.ListWorktrees(root)
-	if err != nil {
-		return err
-	}
-	var tree *git.Worktree
-	for i := range trees {
-		if !trees[i].IsBare && trees[i].Branch == branch {
-			tree = &trees[i]
-			break
-		}
-	}
-	if tree == nil {
-		return fmt.Errorf("worktree %q no longer exists", branch)
-	}
 	// Read the target worktree's config, just as an explicit `up --service`
 	// there would. The shared daemon may have been launched from another repo.
-	cfg, err := config.Load(tree.Path)
+	// Relist and reread rather than trust the cache: this starts a process.
+	tree, cached, err := r.worktrees.lookup(branch, true)
+	if errors.Is(err, errNoWorktree) {
+		return fmt.Errorf("worktree %q no longer exists", branch)
+	}
 	if err != nil {
 		return err
 	}
+	// The cached config is shared with the sync loop; set Project on a copy.
+	own := *cached
+	cfg := &own
 	cfg.Project = cfg.ProjectName(root)
 	svc, ok := cfg.Services[service]
 	if !ok || !svc.OnDemand {
@@ -97,7 +89,7 @@ func (r *Resolver) startOnDemand(branch, service string, backend int) error {
 	}
 	mgr := process.NewManager(cfg, r.store, port.NewRegistry(r.store, cfg))
 	// Root setup and file copying already ran when `up` armed this service.
-	results := mgr.WakeService(tree, service)
+	results := mgr.WakeService(&tree, service)
 	if len(results) != 1 {
 		return fmt.Errorf("service %q could not be started", service)
 	}
