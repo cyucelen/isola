@@ -781,20 +781,43 @@ func TestOrcaConfigGenerated(t *testing.T) {
 
 // isolaState reads the repo's .isola/state.json: the per-worktree service
 // records and port assignments destroy must remove.
-func isolaState(t *testing.T, repo string) (services map[string]json.RawMessage, ports map[string]int) {
+func isolaState(t *testing.T, repo string) (services map[string]map[string]svcRecord, ports map[string]int) {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(repo, ".isola", "state.json"))
 	if err != nil {
 		t.Fatalf("reading state: %v", err)
 	}
 	var st struct {
-		Services        map[string]json.RawMessage `json:"services"`
-		PortAssignments map[string]int             `json:"port_assignments"`
+		Services        map[string]map[string]svcRecord `json:"services"`
+		PortAssignments map[string]int                  `json:"port_assignments"`
 	}
 	if err := json.Unmarshal(data, &st); err != nil {
 		t.Fatalf("parsing state: %v", err)
 	}
 	return st.Services, st.PortAssignments
+}
+
+type svcRecord struct {
+	Port   int    `json:"port"`
+	PID    int    `json:"pid"`
+	Status string `json:"status"`
+}
+
+// assertDestroyedState checks that destroy left branch only stopped tombstones
+// (no PID, no port) and no port assignments.
+func assertDestroyedState(t *testing.T, repo, branch string) {
+	t.Helper()
+	services, ports := isolaState(t, repo)
+	for name, ss := range services[branch] {
+		if ss.Status != "stopped" || ss.PID != 0 || ss.Port != 0 {
+			t.Errorf("%s/%s should be a stopped tombstone after destroy, got %+v", branch, name, ss)
+		}
+	}
+	for key := range ports {
+		if strings.HasPrefix(key, branch+":") {
+			t.Errorf("destroy should release port assignment %s", key)
+		}
+	}
 }
 
 func fileExists(path string) bool {
@@ -826,13 +849,8 @@ func TestDestroyStopsCurrentWorktree(t *testing.T) {
 	if fileExists(mainLog) {
 		t.Error("destroy should delete the current worktree's log")
 	}
-	services, ports := isolaState(t, repo)
-	if _, ok := services["main"]; ok {
-		t.Error("destroy should remove the worktree's service records from state")
-	}
-	if _, ok := ports["main:web"]; ok {
-		t.Error("destroy should release the worktree's port assignment")
-	}
+	assertDestroyedState(t, repo, "main")
+	_, ports := isolaState(t, repo)
 
 	// The other worktree is untouched: still running, its log and state kept.
 	if !e.running(repo, "feature/other") {
@@ -863,13 +881,7 @@ func TestDestroyKeepLogs(t *testing.T) {
 	if !fileExists(mainLog) {
 		t.Error("destroy --keep-logs should keep the worktree's log")
 	}
-	services, ports := isolaState(t, repo)
-	if _, ok := services["main"]; ok {
-		t.Error("destroy --keep-logs should still remove the worktree's state")
-	}
-	if _, ok := ports["main:web"]; ok {
-		t.Error("destroy --keep-logs should still release the worktree's port")
-	}
+	assertDestroyedState(t, repo, "main")
 }
 
 func TestProxyBrandedErrorForDeadBackend(t *testing.T) {

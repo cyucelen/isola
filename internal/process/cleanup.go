@@ -14,61 +14,148 @@ import (
 	"github.com/cyucelen/isola/internal/state"
 )
 
+// stopPID stops a recorded process. Tests replace it to simulate a process
+// that survives being stopped.
+var stopPID = StopPID
+
 // CleanUpWorktree removes what isola keeps for a worktree under the state
-// directory once its services are stopped: its service records and port
-// assignments in state (releasing its stable ports), its service lock files, and
-// its service logs unless keepLogs is set. It is the file-and-state half of
-// `isola destroy`; ReconcileOrphans does the same for removed worktrees.
+// directory: its service lock files, its service logs unless keepLogs is set,
+// and its service records and port assignments in state (releasing its stable
+// ports). It is the file-and-state half of `isola destroy`; ReconcileOrphans
+// does the same for removed worktrees.
+//
+// Any recorded service still alive is stopped first, including one no longer
+// in config, which the caller's stop could not see. A service that cannot be
+// stopped, or whose lock file cannot be removed, keeps its record, port, lock
+// and log so a rerun can finish the job; so does every service in stopFailed
+// (those the caller already failed to stop). Each removed service record is
+// replaced by a stopped tombstone carrying a bumped StopVersion, so a start
+// that began before the cleanup (an `isola up` racing the destroy) sees the
+// stop and cancels instead of starting in a destroyed worktree.
 //
 // Accessory records are left alone: one may only be forgotten once its resource
-// is dropped, and the caller does that (a record that failed to drop stays so a
-// later drop or reconcile retries it). activeBranches is every branch that still
-// has a worktree, branch included; it guards logs against Host label collisions.
-func CleanUpWorktree(cfg *config.Config, store *state.FileStore, branch string, activeBranches map[string]bool, keepLogs bool) error {
+// is dropped, and the caller does that. activeBranches is every branch that
+// still has a worktree, branch included; it guards logs against Host label
+// collisions.
+func CleanUpWorktree(cfg *config.Config, store *state.FileStore, branch string, activeBranches map[string]bool, keepLogs bool, stopFailed []string) error {
+	kept := map[string]bool{}
+	for _, svc := range stopFailed {
+		kept[svc] = true
+	}
+
+	// Snapshot the service names and the recorded services still alive.
 	var services []string
+	live := map[string]int{}
 	if err := store.WithLock(func() error {
 		st, err := store.Load()
 		if err != nil {
 			return err
 		}
 		services = worktreeServiceNames(st, cfg, branch)
-		forgetWorktreeServices(st, branch)
-		return store.Save(st)
+		for name, ss := range st.Services[branch] {
+			if !kept[name] && liveService(ss) {
+				live[name] = ss.PID
+			}
+		}
+		return nil
 	}); err != nil {
-		return fmt.Errorf("pruning state for %s: %w", branch, err)
+		return fmt.Errorf("reading state for %s: %w", branch, err)
 	}
-	return RemoveWorktreeFiles(store, branch, services, activeBranches, keepLogs)
-}
 
-// RemoveWorktreeFiles deletes the files isola keeps under the state directory
-// for one worktree: the service lock file of each named service and, unless
-// keepLogs is set, every service log of the worktree's Host label. Call it only
-// after the worktree's services are stopped, since a lock file in use must not
-// disappear under its holder. Files already gone are not an error.
-//
-// Logs are named by Host label, which two branches can share. When a branch in
-// activeBranches other than branch maps to the same label, the logs belong to
-// that live worktree too and are kept.
-func RemoveWorktreeFiles(store *state.FileStore, branch string, services []string, activeBranches map[string]bool, keepLogs bool) error {
 	var errs []error
-	for _, svc := range services {
-		errs = append(errs, removeIfExists(store.ServiceLockPath(branch, svc)))
+	for _, name := range sortedKeys(live) {
+		pid := live[name]
+		_ = stopPID(pid)
+		if IsProcessRunning(pid) {
+			kept[name] = true
+			errs = append(errs, fmt.Errorf("%s/%s (pid %d) is still running", branch, name, pid))
+		}
+	}
+
+	// Files first, state last: a record is only pruned once its files are gone,
+	// so a rerun still finds every service to clean up.
+	if failed, err := removeServiceLocks(store, branch, services, kept); err != nil {
+		errs = append(errs, err)
+		for svc := range failed {
+			kept[svc] = true
+		}
 	}
 	if !keepLogs {
 		label := git.HostLabel(branch)
 		if other := labelSharer(branch, label, activeBranches); other != "" {
 			logging.Warn("keeping logs for %s: Host label %q is also used by worktree %s", branch, label, other)
 		} else {
-			errs = append(errs, removeLabelLogs(filepath.Join(store.Dir(), "logs"), label))
+			errs = append(errs, removeLabelLogs(filepath.Join(store.Dir(), "logs"), label, kept))
 		}
+	}
+
+	if err := store.WithLock(func() error {
+		st, err := store.Load()
+		if err != nil {
+			return err
+		}
+		for _, name := range services {
+			if kept[name] {
+				continue
+			}
+			if ss := state.GetServiceState(st, branch, name); ss != nil {
+				if liveService(ss) {
+					// Started again since the snapshot: not ours to prune.
+					errs = append(errs, fmt.Errorf("%s/%s was started during the cleanup", branch, name))
+					continue
+				}
+				st.Services[branch][name] = &state.ServiceState{Status: state.StatusStopped, StopVersion: ss.StopVersion + 1}
+			}
+			delete(st.PortAssignments, state.PortKey(branch, name))
+		}
+		return store.Save(st)
+	}); err != nil {
+		errs = append(errs, fmt.Errorf("pruning state for %s: %w", branch, err))
+	}
+	if len(kept) > 0 {
+		errs = append(errs, fmt.Errorf("kept the record, lock and log of %s so a rerun can finish: %s", branch, strings.Join(sortedKeys(kept), ", ")))
 	}
 	return errors.Join(errs...)
 }
 
-// removeLabelLogs deletes every "<label>.<service>.log" in logDir. Host labels
-// contain no dots, so the "<label>." prefix matches only this label's logs, and
-// it also catches services since removed from config.
-func removeLabelLogs(logDir, label string) error {
+// removeServiceLocks deletes the lock file of each of branch's services not in
+// skip, holding each lock while it does. It returns the services whose lock
+// file could not be removed.
+func removeServiceLocks(store *state.FileStore, branch string, services []string, skip map[string]bool) (map[string]bool, error) {
+	failed := map[string]bool{}
+	var errs []error
+	for _, svc := range services {
+		if skip[svc] {
+			continue
+		}
+		if err := store.RemoveServiceLock(branch, svc); err != nil {
+			failed[svc] = true
+			errs = append(errs, fmt.Errorf("removing lock file of %s/%s: %w", branch, svc, err))
+		}
+	}
+	return failed, errors.Join(errs...)
+}
+
+// parseLogName splits a service log file name "<label>.<service>.log" into its
+// Host label and service. Host labels contain no dots, so the first dot ends
+// the label. A name without a service part, such as "proxy.log", is not a
+// service log.
+func parseLogName(name string) (label, service string, ok bool) {
+	label, rest, found := strings.Cut(name, ".")
+	if !found || label == "" || !strings.HasSuffix(rest, ".log") {
+		return "", "", false
+	}
+	service = strings.TrimSuffix(rest, ".log")
+	if service == "" {
+		return "", "", false
+	}
+	return label, service, true
+}
+
+// removeLabelLogs deletes every service log of label in logDir except those of
+// the services in keep. Matching on the label rather than on the configured
+// services also catches services since removed from config.
+func removeLabelLogs(logDir, label string, keep map[string]bool) error {
 	entries, err := os.ReadDir(logDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -78,11 +165,51 @@ func removeLabelLogs(logDir, label string) error {
 	}
 	var errs []error
 	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasPrefix(name, label+".") || !strings.HasSuffix(name, ".log") {
+		l, svc, ok := parseLogName(e.Name())
+		if e.IsDir() || !ok || l != label || keep[svc] {
 			continue
 		}
-		errs = append(errs, removeIfExists(filepath.Join(logDir, name)))
+		errs = append(errs, removeIfExists(filepath.Join(logDir, e.Name())))
+	}
+	return errors.Join(errs...)
+}
+
+// sweepStrayLogs deletes every service log in logDir whose Host label belongs
+// to no branch that still has a worktree or a service record. It collects logs
+// no per-branch cleanup reaches: logs kept by `destroy --keep-logs` or because
+// a live worktree shared the label, once that worktree is gone too, and logs
+// left from before isola deleted them.
+//
+// The directory is listed before state is read: a starting service records
+// itself in state before it creates its log, so a log listed here belongs to a
+// branch the state read below already knows about.
+func sweepStrayLogs(store *state.FileStore, activeBranches map[string]bool) error {
+	logDir := filepath.Join(store.Dir(), "logs")
+	entries, err := os.ReadDir(logDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reading log directory: %w", err)
+	}
+	st, err := store.Snapshot()
+	if err != nil {
+		return err
+	}
+	keep := map[string]bool{}
+	for b := range activeBranches {
+		keep[git.HostLabel(b)] = true
+	}
+	for b := range st.Services {
+		keep[git.HostLabel(b)] = true
+	}
+	var errs []error
+	for _, e := range entries {
+		label, _, ok := parseLogName(e.Name())
+		if e.IsDir() || !ok || keep[label] {
+			continue
+		}
+		errs = append(errs, removeIfExists(filepath.Join(logDir, e.Name())))
 	}
 	return errors.Join(errs...)
 }
@@ -128,21 +255,14 @@ func worktreeServiceNames(st *state.State, cfg *config.Config, branch string) []
 			seen[svc] = true
 		}
 	}
-	names := make([]string, 0, len(seen))
-	for name := range seen {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return sortedKeys(seen)
 }
 
-// forgetWorktreeServices removes branch's service records and port assignments
-// from st, releasing its stable ports. Accessory records are not touched.
-func forgetWorktreeServices(st *state.State, branch string) {
-	delete(st.Services, branch)
-	for key := range st.PortAssignments {
-		if b, _ := state.ParsePortKey(key); b == branch {
-			delete(st.PortAssignments, key)
-		}
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
 	}
+	sort.Strings(keys)
+	return keys
 }
