@@ -27,7 +27,7 @@ processes from scratch) is the separate **isola-init** skill.
 | `proxy_port` | int          | no       | Proxy listen port. Needs a `port_range`; omit both for a background process |
 | `env`        | table        | no       | Per-service env; values may use `${...}` (below). There is no global `[env]` |
 | `env_file`   | string       | no       | Env-file name relative to `dir` (overrides `[env_file]` `path`); `""` opts the service out |
-| `bind`       | string       | no       | `"loopback"` (default) or `"all"`: the daemon's direct listener also accepts other devices on the network (a phone on the same Wi-Fi). Needs `on_demand = true` and a `port_range`. Set only when asked; it exposes the port on every network |
+| `bind`       | string       | no       | `"loopback"` (default) or `"all"`: the daemon's direct listener also accepts other devices on the network (a phone on the same Wi-Fi). Needs `on_demand = true` and a `port_range`. Set only when asked: every armed worktree's port opens on every network, a peer's request wakes it, and the service sees peers as `127.0.0.1` |
 
 A service is one of three shapes, by which port fields it sets:
 

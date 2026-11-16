@@ -25,8 +25,8 @@ type directListener struct {
 	listeners       []net.Listener
 	ctx             context.Context
 	cancel          context.CancelFunc
-	// all binds every interface (bind = "all") instead of loopback only.
-	all bool
+	// bindAll listens on every interface (bind = "all") instead of loopback only.
+	bindAll bool
 }
 
 func directActive(ss *state.ServiceState) bool {
@@ -50,14 +50,11 @@ func (d *Daemon) syncDirect() error {
 		if err != nil {
 			return err
 		}
-		// bind comes from the live config, so editing it rebinds on the next sync.
-		cfg := res.cfg.Load()
 		for branch, services := range st.Services {
 			for service, ss := range services {
 				if directActive(ss) {
 					key := project.StateDir + "\x00" + state.PortKey(branch, service)
-					all := cfg.Services[service].BindsAll()
-					desired[key] = &directListener{port: ss.Port, all: all, resolver: res, branch: branch, service: service}
+					desired[key] = &directListener{port: ss.Port, bindAll: res.bindsAll(service), resolver: res, branch: branch, service: service}
 				}
 			}
 		}
@@ -66,45 +63,57 @@ func (d *Daemon) syncDirect() error {
 	defer d.mu.Unlock()
 	for key, active := range d.direct {
 		want := desired[key]
-		if want == nil || want.port != active.port || want.all != active.all {
+		if want == nil || want.port != active.port || want.bindAll != active.bindAll {
 			active.close()
 			delete(d.direct, key)
 		}
 	}
 	for key, want := range desired {
-		active := d.direct[key]
+		active, ready := d.direct[key], true
 		if active == nil {
+			active = want
 			if err := want.listen(); err != nil {
 				logging.Warn("proxy: direct port %d for %s/%s: %v", want.port, want.branch, want.service, err)
-				continue
+				ready = false
+			} else {
+				d.direct[key] = want
 			}
-			active = want
-			d.direct[key] = active
 		}
-		// Publish readiness without dialing (dialing would be ambiguous with traffic).
-		if err := active.resolver.store.WithLock(func() error {
-			st, err := active.resolver.store.Load()
-			if err != nil {
-				return err
-			}
-			ss := state.GetServiceState(st, active.branch, active.service)
-			if directActive(ss) && ss.Port == active.port && ss.ListenerPID != os.Getpid() {
-				ss.ListenerPID = os.Getpid()
-				return active.resolver.store.Save(st)
-			}
-			return nil
-		}); err != nil {
+		if err := active.publishReadiness(ready); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+// publishReadiness records this daemon as the port's listener without dialing
+// (dialing would be ambiguous with traffic). A port that failed to bind (say,
+// after a bind change) withdraws the record, so `up` reports it instead of
+// trusting a listener that is gone.
+func (l *directListener) publishReadiness(ready bool) error {
+	pid := 0
+	if ready {
+		pid = os.Getpid()
+	}
+	return l.resolver.store.WithLock(func() error {
+		st, err := l.resolver.store.Load()
+		if err != nil {
+			return err
+		}
+		ss := state.GetServiceState(st, l.branch, l.service)
+		if directActive(ss) && ss.Port == l.port && ss.ListenerPID != pid {
+			ss.ListenerPID = pid
+			return l.resolver.store.Save(st)
+		}
+		return nil
+	})
+}
+
 // listen binds the IPv4 and (when available) IPv6 loopback addresses, or the
 // unspecified addresses for bind = "all", which also cover loopback.
 func (l *directListener) listen() error {
 	host4, host6 := "127.0.0.1", "::1"
-	if l.all {
+	if l.bindAll {
 		host4, host6 = "0.0.0.0", "::"
 	}
 	v4, err := net.Listen("tcp4", net.JoinHostPort(host4, strconv.Itoa(l.port)))

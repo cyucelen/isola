@@ -49,6 +49,8 @@ only by default: simulators on your machine connect, physical devices do not.
 - Add `bind = "all"` to the service in `.isola.toml` (it needs `on_demand = true`
   and a `port_range`); the daemon picks it up within a second. See
   [reaching services from other devices](configuration.md#reaching-services-from-other-devices).
+- Use it on trusted networks only: every armed worktree's port is reachable and
+  wakes on request, and the service sees network clients as `127.0.0.1`.
 - Point the device at `http://<your machine's LAN IP>:<port>`, using the port
   `isola ls` shows (not `$PORT`, which is the service's private port).
 - If `isola up` warns that the proxy runs an older isola, it ignores `bind`;

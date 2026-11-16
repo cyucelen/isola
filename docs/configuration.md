@@ -182,16 +182,25 @@ bind = "all"
 ```
 
 The daemon then listens on every interface (`0.0.0.0` and `::`), so devices on
-the network reach the service at `http://<this machine's LAN IP>:<port>`, and
-an idle service wakes on their requests just as on local ones. Loopback,
-`direct_url`, and sibling refs keep working unchanged. It is the exposure of a
-dev server that binds all interfaces itself: anyone who can reach the machine
-on any of its networks (including VPNs and public Wi-Fi) can reach the port, so
-set it only on the services that need it. Every worktree's port for that
-service is exposed.
+the network reach the service at `http://<this machine's LAN IP>:<port>`.
+Loopback, `direct_url`, and sibling refs keep working unchanged. Only the
+services that set `bind = "all"` are exposed, and only their direct ports. Use
+it on networks you trust; it exposes more than the same service binding all
+interfaces itself would:
+
+- **Every worktree, running or idle.** Each worktree where the service is armed
+  has its own port open, and any device that can reach the machine (on any
+  network, including VPNs and public Wi-Fi) starts that worktree's service by
+  connecting to it.
+- **Network clients look local.** The daemon forwards every connection from
+  `127.0.0.1`, so the service cannot tell a phone from a local client. Do not
+  set `bind = "all"` on a service that trusts loopback requests more (debug
+  pages, admin routes, skipped auth).
 
 The daemon reloads the setting within a second of saving `.isola.toml`, with no
 `isola up` or proxy restart; connections open on the changed port are dropped.
+An invalid value keeps the previous setting and is reported in
+`~/.isola/logs/proxy.log` (and by the next `isola up`).
 `bind` applies only to the daemon's direct listeners: proxy URLs
 (`proxy_port`) stay loopback-only, and with `[proxy].enabled = false` the
 service binds its own port and `bind` has no effect. If the macOS firewall is
