@@ -3,11 +3,9 @@
 package state
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"syscall"
 	"time"
 )
@@ -20,8 +18,7 @@ func (s *FileStore) WithLock(fn func() error) error {
 // WithServiceLock serializes lifecycle changes across CLI and proxy processes.
 // It is separate from the state lock so setup never blocks unrelated services.
 func (s *FileStore) WithServiceLock(branch, service string, fn func() error) error {
-	key := sha256.Sum256([]byte(PortKey(branch, service)))
-	return withFileLock(filepath.Join(s.dir, fmt.Sprintf("service-%x.lock", key)), 2*time.Minute, fn)
+	return withFileLock(s.ServiceLockPath(branch, service), 2*time.Minute, fn)
 }
 
 func withFileLock(path string, timeout time.Duration, fn func() error) error {

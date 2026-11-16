@@ -779,17 +779,96 @@ func TestOrcaConfigGenerated(t *testing.T) {
 	}
 }
 
+// isolaState reads the repo's .isola/state.json: the per-worktree service
+// records and port assignments destroy must remove.
+func isolaState(t *testing.T, repo string) (services map[string]json.RawMessage, ports map[string]int) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repo, ".isola", "state.json"))
+	if err != nil {
+		t.Fatalf("reading state: %v", err)
+	}
+	var st struct {
+		Services        map[string]json.RawMessage `json:"services"`
+		PortAssignments map[string]int             `json:"port_assignments"`
+	}
+	if err := json.Unmarshal(data, &st); err != nil {
+		t.Fatalf("parsing state: %v", err)
+	}
+	return st.Services, st.PortAssignments
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 func TestDestroyStopsCurrentWorktree(t *testing.T) {
 	e := newEnv(t)
 	repo := e.repo("e2edestroy")
+	other := filepath.Join(t.TempDir(), "other")
+	e.git(repo, "worktree", "add", "-q", "-b", "feature/other", other)
 
 	e.isola(repo, "up")
-	if !e.anyRunning(repo) {
+	e.isola(other, "up")
+	if !e.running(repo, "main") {
 		t.Fatal("a service should be running after up")
 	}
+	mainLog := process.LogPath(filepath.Join(repo, ".isola"), "main", "web")
+	otherLog := process.LogPath(filepath.Join(repo, ".isola"), "feature-other", "web")
+	if !fileExists(mainLog) || !fileExists(otherLog) {
+		t.Fatalf("up should write logs %s and %s", mainLog, otherLog)
+	}
+
 	e.isola(repo, "destroy")
-	if e.anyRunning(repo) {
+	if e.running(repo, "main") {
 		t.Error("destroy should stop the current worktree's services")
+	}
+	if fileExists(mainLog) {
+		t.Error("destroy should delete the current worktree's log")
+	}
+	services, ports := isolaState(t, repo)
+	if _, ok := services["main"]; ok {
+		t.Error("destroy should remove the worktree's service records from state")
+	}
+	if _, ok := ports["main:web"]; ok {
+		t.Error("destroy should release the worktree's port assignment")
+	}
+
+	// The other worktree is untouched: still running, its log and state kept.
+	if !e.running(repo, "feature/other") {
+		t.Error("destroy must not stop another worktree's services")
+	}
+	if !fileExists(otherLog) {
+		t.Error("destroy must not delete another worktree's log")
+	}
+	if _, ok := ports["feature/other:web"]; !ok {
+		t.Error("destroy must not release another worktree's port")
+	}
+}
+
+func TestDestroyKeepLogs(t *testing.T) {
+	e := newEnv(t)
+	repo := e.repo("e2ekeeplogs")
+
+	e.isola(repo, "up")
+	mainLog := process.LogPath(filepath.Join(repo, ".isola"), "main", "web")
+	if !fileExists(mainLog) {
+		t.Fatalf("up should write log %s", mainLog)
+	}
+
+	e.isola(repo, "destroy", "--keep-logs")
+	if e.anyRunning(repo) {
+		t.Error("destroy --keep-logs should still stop the services")
+	}
+	if !fileExists(mainLog) {
+		t.Error("destroy --keep-logs should keep the worktree's log")
+	}
+	services, ports := isolaState(t, repo)
+	if _, ok := services["main"]; ok {
+		t.Error("destroy --keep-logs should still remove the worktree's state")
+	}
+	if _, ok := ports["main:web"]; ok {
+		t.Error("destroy --keep-logs should still release the worktree's port")
 	}
 }
 

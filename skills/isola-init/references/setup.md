@@ -323,4 +323,5 @@ Cover:
   `NODE_EXTRA_CA_CERTS = "${proxy.ca_cert}"`. Don't run `sudo` on their behalf;
   walk them through it.
 - **Day to day.** `isola ls` (status + URLs), `isola dash` (TUI), `isola down`
-  (stop this worktree), `isola destroy` (stop + drop this worktree's database).
+  (stop this worktree), `isola destroy` (stop + drop this worktree's database and
+  delete its logs and state; `--keep-logs` keeps the logs).

@@ -98,3 +98,39 @@ proxy_port = 3000
 		t.Errorf("live service should stay running, got %+v", ss)
 	}
 }
+
+func TestReconcileOrphansDeletesOrphanFiles(t *testing.T) {
+	mgr, store := managerWithConfig(t, `
+[services.web]
+command = "sleep 120"
+port_range = { min = 19100, max = 19199 }
+proxy_port = 3000
+`)
+	gone := &git.Worktree{Path: t.TempDir(), Branch: "feature/gone"}
+	live := &git.Worktree{Path: t.TempDir(), Branch: "main"}
+	defer mgr.StopServices(live, "")
+	for _, tree := range []*git.Worktree{gone, live} {
+		if r := mgr.StartServices(tree, ""); r[0].Err != nil {
+			t.Fatalf("start %s: %v", tree.Branch, r[0].Err)
+		}
+	}
+	goneLog := LogPath(store.Dir(), "feature-gone", "web")
+	liveLog := LogPath(store.Dir(), "main", "web")
+	goneLock := store.ServiceLockPath("feature/gone", "web")
+	liveLock := store.ServiceLockPath("main", "web")
+	for _, f := range []string{goneLog, liveLog, goneLock, liveLock} {
+		if !exists(f) {
+			t.Fatalf("starting a service should create %s", f)
+		}
+	}
+
+	if _, err := ReconcileOrphans(mgr.cfg, store, map[string]bool{"main": true}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(goneLog) || exists(goneLock) {
+		t.Error("an orphaned worktree's log and lock file should be deleted")
+	}
+	if !exists(liveLog) || !exists(liveLock) {
+		t.Error("a live worktree's log and lock file must be kept")
+	}
+}

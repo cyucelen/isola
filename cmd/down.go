@@ -113,9 +113,10 @@ var downCmd = &cobra.Command{
 }
 
 // pruneOrphanedState tears down worktrees that no longer exist on disk: stop
-// their services, drop the databases they provisioned, and prune their state.
-// It shares ReconcileOrphans with `isola up` and the shared proxy, which run the
-// same teardown automatically; `--prune` is the explicit, on-demand form.
+// their services, drop the databases they provisioned, prune their state, and
+// delete their logs and lock files. It shares ReconcileOrphans with `isola up`
+// and the shared proxy, which run the same teardown automatically; `--prune` is
+// the explicit, on-demand form.
 func pruneOrphanedState(store *state.FileStore, cwd string) error {
 	trees, err := git.ListWorktrees(cwd)
 	if err != nil {

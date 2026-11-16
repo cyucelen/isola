@@ -27,9 +27,10 @@ func liveService(ss *state.ServiceState) bool {
 // ReconcileOrphans fully tears down worktrees that no longer exist on disk
 // (branches recorded in state but absent from activeBranches, the set of
 // branches that still have a worktree): it stops their running services, drops
-// the accessories (databases) isola provisioned for them, and prunes their
-// state. Git has no worktree-removal hook, so this is how a removed worktree is
-// cleaned up, automatically, on `isola up` and on the shared proxy's timer.
+// the accessories (databases) isola provisioned for them, prunes their state,
+// and deletes their service logs and lock files under the state directory. Git
+// has no worktree-removal hook, so this is how a removed worktree is cleaned up,
+// automatically, on `isola up` and on the shared proxy's timer.
 //
 // It only drops resources isola recorded creating (via the state Handle), and
 // the drivers refuse to touch a template or server database, so it can never
@@ -110,13 +111,16 @@ func ReconcileOrphans(cfg *config.Config, store *state.FileStore, activeBranches
 
 	// Phase 3 (locked): prune state for orphaned branches, clearing only the
 	// accessory records that were successfully dropped so failures are retried.
+	// The service names are captured first so phase 4 can find their lock files.
+	orphanServices := map[string][]string{}
 	if err := store.WithLock(func() error {
 		st, err := store.Load()
 		if err != nil {
 			return err
 		}
 		for _, branch := range orphanBranches {
-			delete(st.Services, branch)
+			orphanServices[branch] = worktreeServiceNames(st, cfg, branch)
+			forgetWorktreeServices(st, branch)
 			for name := range st.Accessories[branch] {
 				if dropped[branch+"\x00"+name] {
 					delete(st.Accessories[branch], name)
@@ -135,6 +139,14 @@ func ReconcileOrphans(cfg *config.Config, store *state.FileStore, activeBranches
 		return store.Save(st)
 	}); err != nil {
 		return res, err
+	}
+
+	// Phase 4 (unlocked): delete the orphans' logs and service lock files now
+	// that their services are stopped, so they do not accumulate in .isola/.
+	for _, branch := range orphanBranches {
+		if err := RemoveWorktreeFiles(store, branch, orphanServices[branch], activeBranches, false); err != nil {
+			logging.Warn("removing files of orphaned worktree %s: %v", branch, err)
+		}
 	}
 
 	res.PrunedBranches = orphanBranches
