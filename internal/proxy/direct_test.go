@@ -40,6 +40,12 @@ func helloBackend(t *testing.T) int {
 // whose child listens on backendPort.
 func saveRunningDirect(t *testing.T, store *state.FileStore, service string, public, backendPort int) {
 	t.Helper()
+	saveRunningDirectOn(t, store, "main", service, public, backendPort)
+}
+
+// saveRunningDirectOn is saveRunningDirect for any branch.
+func saveRunningDirectOn(t *testing.T, store *state.FileStore, branch, service string, public, backendPort int) {
+	t.Helper()
 	st, err := store.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +53,7 @@ func saveRunningDirect(t *testing.T, store *state.FileStore, service string, pub
 	ss := state.RunningServiceState(public, os.Getpid())
 	ss.Direct = true
 	ss.BackendPort = backendPort
-	state.SetServiceState(st, "main", service, ss)
+	state.SetServiceState(st, branch, service, ss)
 	if err := store.Save(st); err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +180,9 @@ func TestDirectListenerInterfaces(t *testing.T) {
 // project's config.
 func addDirectProject(t *testing.T, reg *registry.Store, bind string) (int, *state.FileStore, func(bind string)) {
 	t.Helper()
-	repo := t.TempDir()
+	// A real repo, so the daemon finds the main checkout as the worktree that
+	// owns branch "main".
+	repo, _ := newRepoWithWorktree(t)
 	cfgPath := filepath.Join(repo, ".isola.toml")
 	mtime := time.Now()
 	writeCfg := func(bind string) {

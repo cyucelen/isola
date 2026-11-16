@@ -31,11 +31,17 @@ loopback-only.
   loopback so local clients and `direct_url` keep working, and it survives the
   LAN address changing (DHCP renewals, switching networks) without tracking
   interfaces. Hosts without IPv6 keep the IPv4 listener, as on loopback.
-- The daemon reads `bind` from the project's live config on each sync, not from
-  state, so a valid edit applies within a second without `up` or a restart. A
-  changed value is handled like a changed port: the listener and its open
-  connections close and the new one binds. An invalid edit is rejected by the
-  config reload, which keeps the previous config and logs the error.
+- The daemon reads `bind` from the live config of the worktree that has the
+  service's branch checked out, not from state and not from the main checkout,
+  so a branch that adds `bind = "all"` exposes its own ports before it merges,
+  and other worktrees keep their own setting. Each worktree's config is cached
+  and reloaded when its file changes, so a valid edit applies within a second
+  without `up` or a restart. A changed value is handled like a changed port:
+  the listener and its open connections close and the new one binds. An
+  invalid edit keeps the previous config and is logged once. If the worktree
+  is gone (its services are stopped by the next reconcile) or its config has
+  never loaded, a listener that is already open keeps its bind, and a new one
+  takes the main checkout's setting.
 - `bind` is a config error unless the service is `on_demand` with a
   `port_range`; anywhere else the service binds its own port and the key could
   not take effect.
