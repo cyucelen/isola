@@ -151,5 +151,9 @@ isola down --prune           # reconcile removed worktrees now
 
 To tear down the **current** worktree on demand (stop its services, drop its
 databases, delete its logs and state under `.isola/`), use `isola destroy`. Add
-`--keep-logs` to keep its service logs for a post-mortem. Files inside the
-worktree (env files, copied files) and `~/.isola` are never touched.
+`--keep-logs` to keep its service logs for a post-mortem; they stay until the
+worktree is removed, then reconcile deletes them. Logs are also kept while
+another live worktree shares the host label. A service that fails to stop, or a
+database that fails to drop, keeps its record so a rerun finishes the job.
+Files inside the worktree (env files, copied files) and `~/.isola` are never
+touched.

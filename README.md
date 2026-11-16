@@ -237,9 +237,14 @@ Git has no worktree-removal hook, so isola reconciles: a removed worktree is tor
 down automatically, its services stopped, the per-worktree databases it
 provisioned dropped, and its logs and state in `.isola/` deleted, on the next
 `isola up` and by the shared proxy in the background. It only ever drops
-resources isola created. `isola down --prune` runs the same teardown on demand,
-and `isola destroy` tears down the current worktree the same way (pass
-`--keep-logs` to keep its logs).
+resources isola created. `isola down --prune` runs the same teardown on demand.
+
+`isola destroy` tears down the current worktree the same way while it still
+exists. Its logs are kept if you pass `--keep-logs`, or while another live
+worktree's branch maps to the same host label (the label names the log files).
+Logs kept either way are deleted by reconcile once no live worktree uses their
+label, for example after you remove the worktree. A service that fails to stop,
+or a database that fails to drop, keeps its record so the next run retries it.
 
 ## Environment Variables
 
@@ -437,7 +442,9 @@ Two places. **Per repository**, in `.isola/` at the main worktree root: runtime
 state (service PIDs, port assignments, accessory handles) in `.isola/state.json`
 (file-locked for concurrent access), and service logs at
 `.isola/logs/<branch-slug>.<service>.log`. A worktree's logs and state entries
-are deleted when `isola destroy` or reconcile tears it down.
+are deleted when `isola destroy` or reconcile tears it down (see
+[When a worktree is removed](#when-a-worktree-is-removed) for when logs are
+kept).
 
 **Machine-wide**, in `~/.isola/`: the shared proxy's registry (`registry.json`)
 and daemon state (`proxy.json`), the proxy log (`logs/proxy.log`), and the
